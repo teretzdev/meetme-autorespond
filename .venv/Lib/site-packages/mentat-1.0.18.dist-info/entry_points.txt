@@ -1,0 +1,4 @@
+[console_scripts]
+mentat = mentat.terminal.client:run_cli
+mentat-daemon = mentat.daemon:main
+mentat-server = mentat.server.mentat_server:main

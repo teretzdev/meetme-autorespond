@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ragdaemon</title>
+    <link rel="icon" href="static/favicon.ico">
+</head>
+<body>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+        #scene-container {
+            width: 100%;
+            height: 100%;
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 10;
+        }
+        #control-panel {
+            width: 100%;
+            height: 100%;
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 20;
+            padding: 8px;
+            overflow-y: auto; /* Enable vertical scrolling */
+            pointer-events: none; /* Ignore mouse events to allow clicks to pass through */
+        }
+        #search-input {
+            font-size: 1.2em;
+            width: 33%;
+            max-width: 300px;
+            padding: 8px 0px;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+            pointer-events: auto; /* Enable mouse events for the search input */
+            border: 0;
+            border-bottom: 1px solid #d3d3d3;
+            background-color: transparent;
+            color: white;
+        }
+        #search-results {
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+            width: 100%;
+        }
+        .result-panel {
+            color: lightgray;
+            padding: 2px;
+            width: fit-content;
+            pointer-events: auto; /* Enable mouse events for result panels */
+        }
+        .result-panel:hover {
+            color: white;
+            cursor: pointer;
+        }
+    </style>
+    <div id="scene-container"></div>
+    <div id="control-panel">
+        <input type="text" id="search-input" placeholder="Search..." />
+        <div id="search-results"></div>
+    </div>
+    <!-- Include Three.js from a CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.125.2/build/three.min.js"></script>
+
+    <!-- Include OrbitControls.js from Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Variables from backend -->
+    <script>
+        var nodes = {{ nodes | tojson }};
+        var edges = {{ edges | tojson }};
+        var metadata = {{ metadata | tojson }};
+        // Set the window title to the last element of metadata.cwd
+        document.title = `/${metadata.cwd.split('/').pop()}`;
+
+        // Scale node sizes, camera placement, etc to number of nodes
+        const SCALE = Math.sqrt(1 / nodes.length);
+        const NODE_RADIUS = SCALE / 5
+    </script>
+
+    <!-- Frontend script -->
+    <script src="static/js/main.js" type="module"></script>
+</body>
+</html>

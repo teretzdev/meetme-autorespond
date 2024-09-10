@@ -1,0 +1,2 @@
+[console_scripts]
+ragdaemon = ragdaemon.__main__:run
