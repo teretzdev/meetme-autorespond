@@ -29,5 +29,21 @@ coverage/
 .DS_Store
 Thumbs.db
 
+<<<<<<< Updated upstream
 # Virtual environment
 .venv/
+=======
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+
+.venv
+
+node_modules
+>>>>>>> Stashed changes
