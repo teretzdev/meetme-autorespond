@@ -1,0 +1,3 @@
+[PROMPT]
+Use Flowise Prompting
+[/PROMPT]
