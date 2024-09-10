@@ -1,0 +1,27 @@
+{
+  "name": "meetme-message-processor",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "@chakra-ui/next-js": "^2.2.0",
+    "@chakra-ui/react": "^2.8.2",
+    "@emotion/react": "^11.13.3",
+    "@emotion/styled": "^11.13.0",
+    "amqplib": "^0.10.4",
+    "axios": "^1.7.6",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "framer-motion": "^11.3.31",
+    "fs": "^0.0.1-security",
+    "googleapis": "^92.0.0",
+    "puppeteer": "^23.3.0",
+    "sqlite": "^4.0.23",
+    "sqlite3": "^5.0.2",
+    "winston": "^3.3.3"
+  }
+}

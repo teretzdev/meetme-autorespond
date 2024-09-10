@@ -1,0 +1,210 @@
+
+# 2024-08-24 04:21:00.087985
++/model deepseek-coder
+
+# 2024-08-24 04:21:34.387208
++/model deepseek-coder/deepseek-coder
+
+# 2024-08-24 04:21:48.874414
++/model deepseek/deepseek-coder
+
+# 2024-08-24 04:25:12.036679
++create a .gitignore file that is suited for a node.js repo. be sure to omit node_modules
+
+# 2024-08-24 04:26:05.746438
++now lets add all files outside of .gitignore
+
+# 2024-08-24 04:26:17.005332
++/run git add .
+
+# 2024-08-24 04:26:53.021356
++we need to add .venv directory and subs to .gitignore
+
+# 2024-08-24 04:27:20.043223
++/run git add .gitignore
+
+# 2024-08-24 04:27:20.262897
++/run git commit -m "chore: add .venv directory to .gitignore"
+
+# 2024-08-24 04:27:40.994776
++/add main.js
+
+# 2024-08-24 04:27:45.381852
++ls `main.js`
+
+# 2024-08-24 04:27:51.542753
++/run type main.js
+
+# 2024-08-24 04:28:05.631388
++/add fetchMessages.js
+
+# 2024-08-24 04:28:15.195376
++/run node main.js fetch
+
+# 2024-08-24 04:29:14.509137
++we need a quicker timeout. currently, the last cmd i ran didnt timeout.
+
+# 2024-08-24 04:29:36.197671
++/run git add fetchMessages.js
+
+# 2024-08-24 04:29:36.421735
++/run git commit -m "chore: set quicker timeout in fetchMessages.js"
+
+# 2024-08-24 04:29:46.189626
++taht wasnt the timeout needed.
+
+# 2024-08-24 04:30:08.306961
++/run git add fetchMessages.js
+
+# 2024-08-24 04:30:08.510519
++/run git commit -m "chore: set timeout to 1 second in fetchMessages.js"
+
+# 2024-08-24 04:30:17.940561
++we need better logs for node main.js fetch
+
+# 2024-08-24 04:30:52.253164
++/run git add main.js
+
+# 2024-08-24 04:30:52.467246
++/run git commit -m "feat: enhance logging for script restarts in main.js"
+
+# 2024-08-24 04:31:05.708081
++/run node main.js fetch
+
+# 2024-08-24 04:31:34.914750
++/run node `fetchMessages.js`
+
+# 2024-08-24 04:31:43.646334
++/run node fetchMessages.js
+
+# 2024-08-24 04:33:23.441970
++/model deepseek-coder/deepseek-coder
+
+# 2024-08-24 04:33:37.899142
++/model deepseek/deepseek-coder
+
+# 2024-08-24 04:34:13.999753
++i shouldnt have to stop node main.js fetch OR node fetchMessages.js  manually.
+
+# 2024-08-24 04:34:56.816631
++/run npm install -g pm2
+
+# 2024-08-24 04:35:33.790712
++/run pm2 start main.js --name "main"
+
+# 2024-08-24 04:35:45.113541
++/run pm2 start fetchMessages.js --name "fetchMessages"
+
+# 2024-08-24 04:35:50.577948
++/run pm2 start main.js --name "main"
+
+# 2024-08-24 04:35:54.552055
++/run pm2 start fetchMessages.js --name "fetchMessages"
+
+# 2024-08-24 04:36:54.051846
++/run pm2 kill
+
+# 2024-08-24 04:36:56.072894
++/run pm2 update
+
+# 2024-08-24 04:37:01.025803
++/run pm2 serve
+
+# 2024-08-24 04:37:02.719188
++/run pm2 start fetchMessages.js --name "fetchMessages"
+
+# 2024-08-24 05:35:25.021239
++/model deepseek/deepseek-coder
+
+# 2024-08-24 05:39:28.075437
++/run node main.js fetch
+
+# 2024-08-24 05:40:05.514320
++/run node src\fetchMessages_backup.js
+
+# 2024-08-24 05:41:35.225551
++/add src/fetchMessages_backup.js
+
+# 2024-08-24 05:41:42.920429
++/run node src\fetchMessages_backup.js
+
+# 2024-08-24 05:45:28.119670
++those are the wrong sleelctors
+
+# 2024-08-24 05:45:59.427690
++no. get the html and save it. then use that to dtetermien correct selelctros.
+
+# 2024-08-25 08:17:20.315642
++make an archive of all dir contents and sub dir child
+
+# 2024-08-25 08:17:37.590654
++this one. ./
+
+# 2024-08-25 08:17:53.027462
++/run `archive.sh`
+
+# 2024-08-25 08:17:58.856983
++/run archive.sh
+
+# 2024-08-25 08:18:32.540603
++chmod +x archive.sh
+
+# 2024-08-25 08:18:46.998033
++/run ./archive.sh
+
+# 2024-08-25 08:37:30.882405
++/model deepseek/deepseek-coder
+
+# 2024-08-25 08:37:53.968876
++/run node main.py fetch
+
+# 2024-08-25 08:38:02.008691
++ls\
+
+# 2024-08-25 08:38:05.749839
++ls
+
+# 2024-08-25 08:38:35.380493
++/model gpt-4o-mini
+
+# 2024-08-25 08:38:40.042502
++/run node main.py fetch
+
+# 2024-08-25 08:39:00.436171
++python main.py fetch
+
+# 2024-08-25 08:39:20.599368
++ls
+
+# 2024-08-25 08:39:43.786588
++/add main.js
+
+# 2024-08-25 08:39:54.260116
++/run node main.js fetch
+
+# 2024-08-31 04:02:08.745495
++/model deepseek/deepseek-coder
+
+# 2024-08-31 04:02:20.946185
++/model gemini/gemini-1.5-pro-latest
+
+# 2024-08-31 04:02:27.513940
++exit
+
+# 2024-08-31 04:03:33.036195
++/add main.js 
+
+# 2024-08-31 04:04:21.053235
++/add main.js
+
+# 2024-08-31 04:04:32.526747
++/run node main.js process
+
+# 2024-08-31 04:07:50.555199
++/model gemini/gemini-1.5-pro-latest
+
+# 2024-08-31 04:07:58.450013
++/add main.js
+
+# 2024-08-31 04:08:03.288557
++/run node main.js process

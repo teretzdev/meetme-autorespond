@@ -1,0 +1,14 @@
+Rules for Managing Chat History
+1. Unique Messages: Each user's chat history must only contain unique messages. A message is considered unique if both the message content and the timestamp are different from existing entries.
+Latest Messages Only: When adding new messages, only messages that are newer than the most recent message in the user's chat history should be accepted. This prevents older messages from being added again.
+Separate Chat Histories: Each user will have their own separate chat history file stored in the ./meetme_data directory. The filename will be based on the user's ID or username.
+Logging: Log actions taken, such as when a message is added, skipped due to duplication, or ignored because it is older than the last recorded message.
+5. Error Handling: Implement error handling to manage issues that may arise when reading from or writing to the chat history files.
+
+the individuals chat_+history should be sent along with the rabbitmq message so that the chat history can be saved to the correct users file. be sure to format correctly.
+
+if a record is skipped, log the reason why it was skipped.
+
+dont display the message in terminal. 
+
+you should be aware of Liked your photo! messages, messages startying with Seen or Sent should be ignored, and any older or sametime messages. all these shouldnt be processed or requeued.

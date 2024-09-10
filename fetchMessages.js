@@ -1,0 +1,85 @@
+import puppeteer from 'puppeteer';
+import { google } from 'googleapis';
+import { authorize, getChatHistory, updateChatHistory } from './src/services/sheetService.js';
+import { initializeBrowser, loginToMeetMe, navigateToChatPage, handlePopUps, extractChatData } from './src/services/meetmeService.js';
+import config from './src/config/config.js';
+import logger from './src/utils/logger.js';
+import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs';
+
+async function fetchMeetMeMessages() {
+  const browser = await puppeteer.launch({ headless: false });
+  const page = await browser.newPage();
+
+  try {
+    const authClient = await authorize();
+    const db = await setupDatabase();
+    const { channel } = await setupRabbitMQ();
+
+    const isLoggedIn = await loginToMeetMe(page, config.MEETME_USERNAME, config.MEETME_PASSWORD);
+    if (!isLoggedIn) throw new Error('Login failed');
+
+    logger.info('Login successful. Waiting before navigating to chat...');
+    await page.waitForTimeout(1000);
+
+    logger.info('Attempting to navigate to chat page...');
+    let isChatPageLoaded = await navigateToChatPage(page);
+    
+    if (!isChatPageLoaded) {
+      logger.error('Failed to navigate to chat page. Retrying with forced reload...');
+      await page.reload({ waitUntil: 'networkidle0' });
+      isChatPageLoaded = await navigateToChatPage(page);
+      if (!isChatPageLoaded) {
+        logger.error('Failed to navigate to chat page after first retry. Waiting 5 seconds before second retry...');
+        await page.waitForTimeout(1000);
+        await page.reload({ waitUntil: 'networkidle0' });
+        isChatPageLoaded = await navigateToChatPage(page);
+        if (!isChatPageLoaded) {
+          throw new Error('Failed to navigate to chat page after multiple attempts');
+        }
+      }
+    }
+
+    logger.info('Successfully navigated to chat page. Handling pop-ups...');
+    await handlePopUps(page);
+
+    logger.info('Extracting chat data...');
+    const chatData = await extractChatData(page);
+    logger.info(`Extracted chat data: ${JSON.stringify(chatData, null, 2)}`);
+
+    if (chatData.length === 0) {
+      logger.info('No chat data extracted. Ending process.');
+      return;
+    }
+
+    const existingChatHistory = await getChatHistory(authClient);
+    logger.info(`Existing chat history: ${JSON.stringify(existingChatHistory, null, 2)}`);
+
+    for (const message of chatData) {
+      const userCode = message.href.match(/\/(\d+)\/chat$/)[1];
+      const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
+      if (!existingEntry) {
+        await db.run(`
+          INSERT INTO messages (id, user, timestamped, message, href, status)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [`${message.username}-${message.timeSent}`, message.username, message.timeSent, message.shortMessage, message.href, 'queued']);
+
+        channel.sendToQueue('messages_to_process', Buffer.from(JSON.stringify(message)), { persistent: true });
+      }
+    }
+
+    logger.info('Messages fetched and queued for processing');
+
+  } catch (error) {
+    logger.error(`Error in fetchMeetMeMessages: ${error.message}`);
+    logger.error(`Error stack: ${error.stack}`);
+  } finally {
+    await browser.close();
+  }
+}
+
+// Run fetch job every X minutes
+const fetchInterval = config.FETCH_INTERVAL || 15 * 60 * 1000; // Default 15 minutes
+setInterval(fetchMeetMeMessages, fetchInterval);
+
+// Initial run
+fetchMeetMeMessages();
