@@ -1,0 +1,10 @@
+[
+    {
+        "href": "https://example.com/chat/1",
+        "response": "Hello, how are you?"
+    },
+    {
+        "href": "https://example.com/chat/2",
+        "response": "Thanks for your message!"
+    }
+]

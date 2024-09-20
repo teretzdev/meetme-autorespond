@@ -160,3 +160,28 @@ export async function fetchMeetMeMessages() {
     }
 }
 fetchMeetMeMessages();
+
+export async function fetchMessagesFromProcessed() {
+    const messages = [];
+    let msg;
+
+    try {
+        // Attempt to fetch messages from the queue
+        while (true) {
+            msg = await channel.get('meetme_processed', { noAck: false });
+            if (!msg) {
+                logger.info('No more messages in the meetme_processed queue.');
+                break; // Exit the loop if no more messages are available
+            }
+            const messageContent = JSON.parse(msg.content.toString());
+            messages.push(messageContent);
+            logger.info(`Fetched message: ${JSON.stringify(messageContent)}`);
+            channel.ack(msg); // Acknowledge the message
+        }
+    } catch (error) {
+        logger.error(`Error fetching messages from meetme_processed: ${error.message}`);
+    }
+
+    logger.info(`Total messages fetched: ${messages.length}`);
+    return messages;
+}

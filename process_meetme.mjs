@@ -1,31 +1,25 @@
+// process_meetme.mjs
 import amqp from 'amqplib';
 import axios from 'axios';
-import { ChatHistory } from './chatHistory.mjs'; // Change to named import if necessary
-import fs from 'fs';
-import path from 'path';
+import express from 'express';
+import bodyParser from 'body-parser';
+import winston from 'winston';
 import { fileURLToPath } from 'url';
-import winston from 'winston'; // Import winston for logging
-import { chatPhaseAnalyzer } from './chatPhaseAnalyzerSecondary.js'; // Use named import
-import { promisify } from 'util';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const meetmeDataDir = path.join(__dirname, 'meetme_data');
-
-// Ensure the directory exists
-if (!fs.existsSync(meetmeDataDir)) {
-  fs.mkdirSync(meetmeDataDir);
-}
-
 // Configure logger
 const logger = winston.createLogger({
-  level: 'info',
+  level: 'debug', // Set to 'debug' for more verbose logging
   format: winston.format.combine(
     winston.format.timestamp({
-      format: 'YYYY-MM-DDTHH:mm:ss.sssZ' // Explicitly set the timestamp format
+      format: 'YYYY-MM-DDTHH:mm:ss.sssZ'
     }),
-    winston.format.json()
+    winston.format.printf(({ level, message, timestamp }) => {
+      return `${timestamp} ${level}: ${message}`;
+    })
   ),
   transports: [
     new winston.transports.Console(),
@@ -33,97 +27,208 @@ const logger = winston.createLogger({
   ]
 });
 
-// Define the isValidTimestamp function
-function isValidTimestamp(timestamp) {
-    // Implement your validation logic here
-    return !isNaN(Date.parse(timestamp)); // Example validation
-}
-
-// Static port for Flowise
 const FLOWISE_PORT = 3000;
+const API_PORT = 2089;
+const RABBITMQ_URL = 'amqp://localhost';
+const INPUT_QUEUE = 'meetme_queue';
+const OUTPUT_QUEUE = 'meetme_processed';
 
-class RabbitMQFlowiseProcessor {
-  constructor(rabbitmqUrl = 'amqp://localhost', inputQueue = 'meetme_queue', outputQueue = 'meetme_processed') {
-    this.rabbitmqUrl = rabbitmqUrl;
-    this.inputQueue = inputQueue;
-    this.outputQueue = outputQueue;
+class MeetMeProcessor {
+  constructor() {
+    this.app = express();
     this.flowiseEndpoint = `http://localhost:${FLOWISE_PORT}/api/v1/prediction/3a0b9170-61a0-42a9-9bf2-142bd092dba7`;
-    this.chatHistory = new ChatHistory(); // Create an instance of ChatHistory
-    this.agentState = {};
-    this.processMessage = this.processMessage.bind(this); // Ensure 'this' refers to the class instance
+    this.setupExpress();
+  }
+
+  setupExpress() {
+    this.app.use(bodyParser.json());
+    this.app.post('/api/message', this.handleApiMessage.bind(this));
+  }
+
+  async setupRabbitMQ() {
+    try {
+      this.connection = await amqp.connect(RABBITMQ_URL);
+      this.channel = await this.connection.createChannel();
+      await this.channel.assertQueue(INPUT_QUEUE, { durable: true });
+      await this.channel.assertQueue(OUTPUT_QUEUE, { durable: true });
+      logger.info('RabbitMQ setup completed');
+      logger.debug(`RabbitMQ connected to ${RABBITMQ_URL}`);
+      logger.debug(`Input queue: ${INPUT_QUEUE}, Output queue: ${OUTPUT_QUEUE}`);
+    } catch (error) {
+      logger.error(`Error setting up RabbitMQ: ${error.message}`);
+      logger.debug(`RabbitMQ setup error stack: ${error.stack}`);
+      throw error; // Rethrow the error to be caught in the start method
+    }
+  }
+
+  async handleApiMessage(req, res) {
+    logger.info('Received POST request to /api/message');
+    logger.debug(`API request body: ${JSON.stringify(req.body)}`);
+    
+    const { name, message, timestamp, url } = req.body;
+    
+    if (!this.validateInput(name, message, timestamp, url)) {
+      logger.warn('Missing required fields in request');
+      logger.debug(`Invalid input: ${JSON.stringify(req.body)}`);
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const data = { name, message, timestamp, url };
+    logger.info(`Validated data: ${JSON.stringify(data)}`);
+    
+    try {
+      await this.sendToRabbitMQ(data);
+      logger.info('Successfully sent data to RabbitMQ');
+      res.status(200).json({ message: 'Data received and sent to RabbitMQ' });
+    } catch (error) {
+      logger.error(`Error sending data to RabbitMQ: ${error.message}`);
+      logger.debug(`RabbitMQ send error stack: ${error.stack}`);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  validateInput(name, message, timestamp, url) {
+    return name && message && timestamp && url;
+  }
+
+  async sendToRabbitMQ(data) {
+    try {
+      this.channel.sendToQueue(INPUT_QUEUE, Buffer.from(JSON.stringify(data)));
+      logger.info(`Message sent to RabbitMQ: ${JSON.stringify(data)}`);
+    } catch (error) {
+      logger.error(`Error sending message to RabbitMQ: ${error.message}`);
+      logger.debug(`RabbitMQ send error stack: ${error.stack}`);
+      throw error;
+    }
   }
 
   async processMessage(message) {
-    // Your processing logic here
+    try {
+      console.log('Processing message:', this.safeStringify(message));
+
+      // Ensure the message content is not empty
+      if (!message.message || message.message.trim() === '') {
+        logger.warn('Empty message content received. Skipping processing.');
+        return null;
+      }
+
+      // Construct the payload for Flowise
+      const flowisePayload = {
+        question: message.message,
+        history: [], // Add chat history if needed
+        overrideConfig: {
+          name: message.name,
+          timestamp: message.timestamp,
+          url: message.url,
+          currentPhase: message.currentPhase
+        }
+      };
+
+      logger.debug(`Payload being sent to Flowise: ${JSON.stringify(flowisePayload)}`);
+
+      const flowiseResponse = await axios.post(this.flowiseEndpoint, flowisePayload);
+      
+      logger.info('Message processed successfully by Flowise');
+      logger.debug(`Flowise response: ${JSON.stringify(flowiseResponse.data)}`);
+
+      return {
+        original: message,
+        flowiseResponse: flowiseResponse.data,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error processing message:', this.safeStringify(error));
+      throw error;
+    }
   }
 
-  parseTimestamp(timestamp) {
-    const now = Date.now();
-    const timeUnits = {
-      s: 1000,
-      m: 60 * 1000,
-      h: 60 * 60 * 1000,
-      d: 24 * 60 * 60 * 1000,
-      mo: 30 * 24 * 60 * 60 * 1000,
-      y: 365 * 24 * 60 * 60 * 1000
-    };
-
-    // If it's already a number, assume it's a Unix timestamp in milliseconds
-    if (!isNaN(timestamp)) {
-      return parseInt(timestamp);
-    }
-
-    const match = timestamp.match(/^(\d+)\s*([a-z]+)$/i);
-    if (match) {
-      const [, value, unit] = match;
-      const multiplier = timeUnits[unit.toLowerCase()];
-      if (multiplier) {
-        return now - (parseInt(value) * multiplier);
+  // Add this method to safely stringify objects with circular references
+  safeStringify(obj) {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular]';
+        }
+        seen.add(value);
       }
-    }
-
-    // If it doesn't match any known format, log an error and return current timestamp
-    logger.error(`Invalid timestamp format: ${timestamp}`);
-    return now;
+      return value;
+    });
   }
 
   async start() {
     try {
-      logger.info(`Flowise endpoint set to: ${this.flowiseEndpoint}`);
-
-      const connection = await amqp.connect(this.rabbitmqUrl);
-      logger.info('Connected to RabbitMQ');
-
-      const channel = await connection.createChannel();
-      logger.info('Channel created');
-
-      await channel.assertQueue(this.inputQueue, { durable: true });
-      await channel.assertQueue(this.outputQueue, { durable: true });
-      logger.info(`Queues '${this.inputQueue}' and '${this.outputQueue}' asserted`);
-
-      logger.info(`Waiting for messages in queue '${this.inputQueue}'`);
-
-      channel.consume(this.inputQueue, async (msg) => {
+      await this.setupRabbitMQ();
+  
+      this.app.listen(API_PORT, () => {
+        logger.info(`API server started on http://localhost:${API_PORT}`);
+      });
+  
+      this.channel.consume(INPUT_QUEUE, async (msg) => {
         if (msg !== null) {
-          const messageContent = JSON.parse(msg.content.toString());
-          const processedMessage = await this.processMessage(messageContent);
-          if (processedMessage) {
-            await this.sendToFlowiseAndRequeue(channel, processedMessage);
+          try {
+            logger.info(`Received message from RabbitMQ: ${msg.content.toString()}`);
+            const messageContent = JSON.parse(msg.content.toString());
+            logger.debug(`Parsed message content: ${JSON.stringify(messageContent)}`);
+            
+            const processedMessage = await this.processMessage(messageContent);
+            
+            if (processedMessage) {
+              const safeProcessedMessage = JSON.parse(JSON.stringify(processedMessage, (key, value) => {
+                if (typeof value === 'object' && value !== null) {
+                  if (key === 'request' || key === 'response' || key === 'socket' || key === '_httpMessage') {
+                    return '[Circular]';
+                  }
+                }
+                return value;
+              }));
+  
+              await this.channel.sendToQueue(
+                OUTPUT_QUEUE,
+                Buffer.from(JSON.stringify(safeProcessedMessage)),
+                { persistent: true }
+              );
+              logger.info(`Processed message sent to queue '${OUTPUT_QUEUE}'`);
+              logger.debug(`Processed message content: ${JSON.stringify(safeProcessedMessage)}`);
+            } else {
+              logger.warn('Processed message was null. Not sending to output queue.');
+            }
+            
+            this.channel.ack(msg);
+          } catch (error) {
+            logger.error(`Error processing message: ${error.message}`);
+            logger.debug(`Message processing error stack: ${error.stack}`);
+            
+            // Implement a delay before retrying
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Negative acknowledge the message, requeue it
+            this.channel.nack(msg, false, true);
           }
-          channel.ack(msg);
         }
       });
-
+  
+      logger.info('MeetMe Processor started');
     } catch (error) {
-      logger.error('Error in RabbitMQ processing:', error);
+      logger.error(`Failed to start MeetMe Processor: ${error.message}`);
+      logger.debug(`Start error stack: ${error.stack}`);
+      throw error;
     }
   }
-
-  // ... rest of the class implementation ...
 }
 
 // Usage
-const processor = new RabbitMQFlowiseProcessor();
-processor.start();
+const startProcessor = async () => {
+  try {
+    const processor = new MeetMeProcessor();
+    await processor.start();
+  } catch (error) {
+    logger.error(`Error starting MeetMe Processor: ${error.message}`);
+    logger.debug(`Start error stack: ${error.stack}`);
+    process.exit(1);
+  }
+};
 
-export default RabbitMQFlowiseProcessor;
+startProcessor();
+
+export default MeetMeProcessor;

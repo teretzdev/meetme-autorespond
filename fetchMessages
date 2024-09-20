@@ -58,7 +58,7 @@ async function fetchMeetMeMessages() {
           VALUES (?, ?, ?, ?, ?, ?)
         `, [`${message.username}-${message.timeSent}`, message.username, message.timeSent, message.shortMessage, message.href, 'queued']);
 
-        channel.sendToQueue('messages_to_process', Buffer.from(JSON.stringify(message)), { persistent: true });
+        channel.sendToQueue('meetme_processed', Buffer.from(JSON.stringify(message)), { persistent: true });
       }
     }
 

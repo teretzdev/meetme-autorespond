@@ -1,6 +1,6 @@
-const express = require('express');
-const amqp = require('amqplib');
-const bodyParser = require('body-parser');
+import express from 'express';
+import amqp from 'amqplib';
+import bodyParser from 'body-parser';
 
 class ApiToRabbitMQBridge {
   constructor(port = 2090, rabbitmqUrl = 'amqp://localhost', queueName = 'meetme_queue') {

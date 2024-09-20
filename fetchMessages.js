@@ -58,12 +58,12 @@ async function fetchMeetMeMessages() {
       const userCode = message.href.match(/\/(\d+)\/chat$/)[1];
       const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
       if (!existingEntry) {
-        await db.run(`
-          INSERT INTO messages (id, user, timestamped, message, href, status)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `, [`${message.username}-${message.timeSent}`, message.username, message.timeSent, message.shortMessage, message.href, 'queued']);
-
-        channel.sendToQueue('messages_to_process', Buffer.from(JSON.stringify(message)), { persistent: true });
+        try {
+          channel.sendToQueue('meetme_processed', Buffer.from(JSON.stringify(message)), { persistent: true });
+          logger.info(`Sent message to 'messages_to_process': ${JSON.stringify(message)}`);
+        } catch (error) {
+          logger.error(`Failed to send message to 'meetme_processed': ${error.message}`);
+        }
       }
     }
 

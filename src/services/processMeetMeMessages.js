@@ -119,3 +119,18 @@ export async function main(authClient) {
     logger.error(`Main process error: ${error.message}`);
   }
 }
+
+import { fetchMessagesFromProcessed } from './fetchMessages.js'; // Adjust the path as necessary
+
+export async function processMessages(page) {
+    const messages = await fetchMessagesFromProcessed();
+
+    if (!Array.isArray(messages)) {
+        logger.error('Fetched messages is not an array:', messages);
+        throw new Error('Fetched messages is not iterable');
+    }
+
+    for (const message of messages) {
+        await sendReply(page, message.text, message.href);
+    }
+}

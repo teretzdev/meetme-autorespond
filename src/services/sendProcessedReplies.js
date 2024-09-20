@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import puppeteer from 'puppeteer';
 import logger from '../utils/logger.js';
 import config from '../config/config.js';
+import { processMessages } from './processMeetMeMessages.js'; // Adjust the path as necessary
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,113 +192,29 @@ async function handlePopUps(page) {
   }
 }
 
-async function sendReply(page, replyText, href, authClient, rowIndex) {
-  logger.info(`Attempting to send reply to ${href}`);
-  try {
-    // Navigate directly to the chat page using the href from column D
-    logger.info(`Navigating to chat page: ${href}`);
-    await page.goto(href, { waitUntil: 'networkidle0', timeout: 60000 });
-    logger.info('Navigation to chat page completed');
+export async function sendReply(page, replyText, href) {
+    logger.info(`Attempting to send reply to ${href}`);
+    try {
+        // Log the URL before navigation
+        logger.info(`Navigating to URL: ${href}`);
 
-    // Handle any popups that might appear after navigation
-    logger.info('Handling any pop-ups');
-    await handlePopUps(page);
+        // Validate the URL
+        if (!href || typeof href !== 'string' || !href.startsWith('http')) {
+            logger.error(`Invalid URL: ${href}`);
+            throw new Error('Invalid URL for navigation');
+        }
 
-    // Log the HTML content of the chat form
-    const formHtml = await page.evaluate(() => {
-      const form = document.querySelector('.chat-form');
-      return form ? form.outerHTML : 'Chat form not found';
-    });
-    logger.info(`Chat form HTML: ${formHtml}`);
+        await page.goto(href, { waitUntil: 'networkidle0', timeout: 60000 });
+        logger.info('Navigation to chat page completed');
 
-    logger.info('Attempting to input text and send message...');
-    
-    // Take a screenshot before interacting with the page
-    await page.screenshot({ path: `debug-screenshot-before-${rowIndex}.png`, fullPage: true });
-
-    // Wait for the textarea to be visible
-    await page.waitForSelector('textarea.form-control.input-lg[placeholder="Type something…"]', { visible: true, timeout: 10000 });
-
-    // Use page.evaluate for more detailed logging and to ensure we're interacting with the correct elements
-    const result = await page.evaluate(async (text) => {
-      const textarea = document.querySelector('textarea.form-control.input-lg[placeholder="Type something…"]');
-      const sendButton = document.querySelector('.chat-form button[type="submit"]');
-      
-      if (!textarea || !sendButton) {
-        console.error('Could not find textarea or send button');
-        return { success: false, error: 'Could not find textarea or send button' };
-      }
-
-      console.log('Textarea found:', textarea);
-      console.log('Send button found:', sendButton);
-
-      // Simulate user typing
-      textarea.value = text;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
-      
-      console.log('Text input simulated. Textarea value:', textarea.value);
-      
-      // Wait a bit to simulate natural typing
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Enable the send button if it's disabled
-      if (sendButton.disabled) {
-        console.log('Send button was disabled. Enabling...');
-        sendButton.disabled = false;
-      }
-      
-      console.log('Clicking send button...');
-      // Click the send button
-      sendButton.click();
-      
-      return { success: true, inputValue: textarea.value };
-    }, replyText);
-
-    // Log the result from page.evaluate
-    logger.info('Page evaluation result:', result);
-
-    // Take another screenshot after interacting with the page
-    await page.screenshot({ path: `debug-screenshot-after-${rowIndex}.png`, fullPage: true });
-
-    // Check for any error messages or notifications on the page
-    const errorMessages = await page.evaluate(() => {
-      const errors = document.querySelectorAll('.error-message, .notification');
-      return Array.from(errors).map(e => e.textContent);
-    });
-    if (errorMessages.length > 0) {
-      logger.warn(`Error messages found on page: ${errorMessages.join(', ')}`);
+        // Handle sending the reply
+        await page.type('selector-for-reply-input', replyText); // Adjust selector as needed
+        await page.click('selector-for-send-button'); // Adjust selector as needed
+        logger.info('Reply sent successfully');
+    } catch (error) {
+        logger.error(`Error sending reply: ${error.message}`);
+        // Optionally, you can handle specific error types here
     }
-
-    if (result.success) {
-      logger.info(`Reply input successfully. Textarea value: ${result.inputValue}`);
-      // Wait for a moment to allow the message to be sent
-      await page.waitForTimeout(2000);
-      
-      // Check if the message appears in the chat
-      const messageAppeared = await page.evaluate((text) => {
-        const messages = document.querySelectorAll('.chat-message');
-        return Array.from(messages).some(msg => msg.textContent.includes(text));
-      }, replyText);
-
-      if (messageAppeared) {
-        logger.info(`Reply sent successfully and appeared in chat: ${replyText.substring(0, 50)}...`);
-        await updateCellStatus(authClient, rowIndex, 'sent', 'E');
-        logger.info(`Updated status for row ${rowIndex} to 'sent' in column E`);
-      } else {
-        logger.warn(`Reply input, but not found in chat messages. May not have been sent.`);
-        throw new Error('Reply not found in chat messages');
-      }
-    } else {
-      throw new Error(result.error || 'Failed to input message');
-    }
-
-  } catch (error) {
-    logger.error(`Error sending reply to ${href}: ${error.message}`, { stack: error.stack });
-    // Take a screenshot when an error occurs
-    await page.screenshot({ path: `error-screenshot-${rowIndex}.png`, fullPage: true });
-    throw error;
-  }
 }
 
 async function processCells(cells, maxRetries = 3) {
@@ -374,3 +291,21 @@ async function main() {
   }
 
 export { main, storeResponse };
+
+export async function processMessages(page) {
+    const messages = await fetchMessagesFromProcessed(); // Ensure this function is defined
+    logger.info(`Fetched ${messages.length} messages from RabbitMQ.`); // Log the number of messages
+
+    for (const message of messages) {
+        logger.info(`Processing message: ${JSON.stringify(message)}`); // Log each message being processed
+
+        // Extract the URL from the message
+        const url = message.original.url; // Adjust this line based on your message structure
+        if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+            logger.error(`Invalid or missing URL in message: ${JSON.stringify(message)}`);
+            continue; // Skip this message if URL is not valid
+        }
+
+        await sendReply(page, message.flowiseResponse.text, url); // Pass the URL to sendReply
+    }
+}

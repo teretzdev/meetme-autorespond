@@ -20,6 +20,7 @@
     "fs": "^0.0.1-security",
     "googleapis": "^92.0.0",
     "puppeteer": "^23.3.0",
+    "puppeteer-extra": "^3.3.6",
     "sqlite": "^4.0.23",
     "sqlite3": "^5.0.2",
     "winston": "^3.3.3"

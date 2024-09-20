@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer';
 import { getTimestamp } from '../utils/timeUtils.js'; // Updated import statement
-import { storeResponse } from '../services/sendProcessedReplies.js';
+import { storeResponse } from '../services/.js';
 //import { queryJessAI } from '../jessAI';
 import { sendMessageToAPI } from '../api/messageApi.js';
 import logger from '../utils/logger.js';
@@ -22,58 +22,66 @@ import { type } from 'os';
 let skippedMessages = [];
 
 export async function loginToMeetMe(browser, page, username, password) {
-  logger.info('Starting MeetMe login process');
-  const maxAttempts = 3;
-  const waitTime = 3000; // 3 seconds
+    logger.info('Starting MeetMe login process');
+    const maxAttempts = 3;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2' });
-      logger.info(`Page loaded. Current URL: ${page.url()}`);
-
-      logger.info('Waiting for login button');
-      const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: 25000 });
-      await loginButton.click();
-
-      logger.info('Entering credentials');
-      await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: 25000 });
-      await typeSlowly('#site-login-modal-email', username);
-      await typeSlowly('#site-login-modal-password', password);
-
-      logger.info('Submitting login form');
-      await Promise.all([
-        page.click('#site-login-modal-submit-group > button'),
-        page.waitForNavigation({ waitUntil: 'networkidle0' })
-      ]);
-
-      for (let checkAttempt = 1; checkAttempt <= 3; checkAttempt++) {
-        await page.waitForTimeout(waitTime);
-        const currentUrl = page.url();
-        logger.info(`Check attempt ${checkAttempt}: Current URL after login: ${currentUrl}`);
-
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // Check if already logged in before attempting to log in
+        const currentUrl = await page.url();
         if (currentUrl.includes('#meet') || currentUrl.includes('app.meetme.com')) {
-          logger.info('Successfully logged in to MeetMe');
-          return true;
+            logger.info('User is already logged in.');
+            return true; // Return true if already logged in
         }
-      }
 
-      logger.warn(`Login attempt ${attempt} unsuccessful. URL does not indicate successful login.`);
-      
-      if (attempt < maxAttempts) {
-        logger.info(`Retrying login in ${waitTime / 1000} seconds...`);
-        await page.waitForTimeout(waitTime);
-      }
-    } catch (error) {
-      logger.error(`Error during login attempt ${attempt}: ${error.message}`);
-      if (attempt < maxAttempts) {
-        logger.info(`Retrying login in ${waitTime / 1000} seconds...`);
-        await page.waitForTimeout(waitTime);
-      }
+        try {
+            await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2' });
+            logger.info(`Page loaded. Current URL: ${page.url()}`);
+
+            // Wait for and click the login button
+            const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: 25000 });
+            await loginButton.click();
+
+            logger.info('Entering credentials');
+            await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: 25000 });
+            await typeSlowly('#site-login-modal-email', username);
+            await typeSlowly('#site-login-modal-password', password);
+
+            logger.info('Submitting login form');
+            await Promise.all([
+                page.click('#site-login-modal-submit-group > button'),
+                page.waitForNavigation({ waitUntil: 'networkidle0' })
+            ]);
+
+            // Check if the current URL indicates a successful login immediately after form submission
+            const newUrl = await page.url();
+            logger.info(`Current URL after login submission: ${newUrl}`);
+
+            // Check for successful login
+            if (newUrl.includes('#meet') || newUrl.includes('app.meetme.com')) {
+                logger.info('Successfully logged in to MeetMe');
+                return true; // Return true on successful login
+            }
+
+            logger.warn(`Login attempt ${attempt} unsuccessful. URL does not indicate successful login.`);
+
+            // Log the HTML content for debugging
+            const htmlContent = await page.content();
+            logger.info('HTML content after login attempt:', htmlContent);
+
+            if (attempt < maxAttempts) {
+                logger.info(`Retrying login in 3 seconds...`);
+                await page.waitForTimeout(3000); // Wait before retrying
+            }
+        } catch (error) {
+            logger.error(`Error during login attempt ${attempt}: ${error.message}`);
+            if (attempt === maxAttempts) {
+                logger.error('Max login attempts reached. Login failed.');
+                return false; // Return false on failure
+            }
+        }
     }
-  }
 
-  logger.error('All login attempts failed');
-  return false;
+    return false; // Return false if not logged in
 }
 
 export async function handlePopUps(page) {

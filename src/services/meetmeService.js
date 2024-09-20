@@ -1,4 +1,3 @@
-// src/services/meetmeService.js
 import puppeteer from 'puppeteer';
 import config from '../config/config.js';
 import logger from '../utils/logger.js';
@@ -43,7 +42,7 @@ export async function loginToMeetMe(page, username, password) {
 
       while (!currentUrl.includes('#meet') && attempts < maxCheckAttempts) {
         logger.info(`Current URL: ${currentUrl}. Waiting for #meet... (Attempt ${attempts + 1}/${maxCheckAttempts})`);
-        await page.waitForTimeout(checkInterval);
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
         currentUrl = page.url();
         attempts++;
       }
@@ -91,14 +90,14 @@ export async function loginToMeetMe(page, username, password) {
 
         if (attempt < maxAttempts) {
           logger.warn(`Login attempt ${attempt} unsuccessful. Retrying in ${waitTime / 1000} seconds...`);
-          await page.waitForTimeout(waitTime);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     } catch (error) {
       logger.error(`Error during login attempt ${attempt}: ${error.message}`);
       if (attempt < maxAttempts) {
         logger.info(`Retrying login in ${waitTime / 1000} seconds...`);
-        await page.waitForTimeout(waitTime);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
   }
@@ -118,7 +117,7 @@ export async function handlePopUps(page) {
       await page.waitForSelector(selector, { visible: true, timeout: 5000 });
       await page.click(selector);
       logger.info(`Clicked popup: ${selector}`);
-      await page.waitForTimeout(1000);
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       logger.info(`Popup not found or not clickable: ${selector}`);
     }
@@ -162,7 +161,7 @@ export async function sendReply(page, replyText, href) {
 
     if (result.success) {
       logger.info(`Reply input successfully. Textarea value: ${result.inputValue}`);
-      await page.waitForTimeout(2000);
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       const messageAppeared = await page.evaluate((text) => {
         const messages = document.querySelectorAll('.chat-message');
@@ -191,6 +190,7 @@ export async function closeBrowser(browser) {
   await browser.close();
   logger.info('Browser closed');
 }
+
 export async function extractChatData(page) {
   logger.info('Starting chat data extraction');
   try {
@@ -217,23 +217,21 @@ export async function extractChatData(page) {
     return [];
   }
 }
+
 export async function navigateToChatPage(page) {
   logger.info('Navigating to chat page...');
   try {
     const chatUrl = 'https://beta.meetme.com/#chat';
     
-    // Use page.goto() to navigate to the chat URL
     await page.goto(chatUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     
     logger.info('Navigation initiated. Waiting for page load...');
     
-    // Wait for the chat section to be visible
     await page.waitForSelector('#chat-section', { visible: true, timeout: 30000 });
     
     const currentUrl = await page.url();
     logger.info(`Page loaded. Current URL: ${currentUrl}`);
 
-    // Verify we're on the chat page
     const isChatPage = await page.evaluate(() => {
       return window.location.hash === '#chat' && !!document.querySelector('#chat-section');
     });
@@ -246,7 +244,6 @@ export async function navigateToChatPage(page) {
     return true;
   } catch (error) {
     logger.error(`Error navigating to chat page: ${error.message}`);
-    // Log the current page content for debugging
     const currentUrl = await page.url();
     logger.error(`Current URL after navigation attempt: ${currentUrl}`);
     const pageContent = await page.content();
@@ -254,6 +251,7 @@ export async function navigateToChatPage(page) {
     return false;
   }
 }
+
 export default {
   initializeBrowser,
   loginToMeetMe,

@@ -1,171 +1,237 @@
 import puppeteer from 'puppeteer';
-import logger from './src/utils/logger.js'; // Ensure this path is correct
-import config from './src/config/config.js'; // Importing the config file
+import dotenv from 'dotenv';
+import amqp from 'amqplib';
 
-logger.info('Logger initialized successfully'); // Added for debugging logger initialization
+dotenv.config({ path: './meetme_data/.env' });
 
-export async function loginToMeetMe(page, username, password) {
-    logger.info('Starting MeetMe login process');
-    const maxAttempts = 3;
-    const waitTime = 10000; // 10 seconds
-  
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2' });
-            logger.info(`Page loaded. Current URL: ${page.url()}`);
-  
-            logger.info('Waiting for login button');
-            const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: 25000 });
-            await loginButton.click();
-  
-            logger.info('Entering credentials');
-            await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: 25000 });
-            await page.type('#site-login-modal-email', username);
-            await page.type('#site-login-modal-password', password);
-  
-            logger.info('Submitting login form');
-            await Promise.all([
-                page.click('#site-login-modal-submit-group > button'),
-                page.waitForNavigation({ waitUntil: 'load' })
-            ]);
-  
-            logger.info('Checking if we have reached the #meet page...');
-            let currentUrl = page.url();
-            let attempts = 0;
-            const maxCheckAttempts = 30;
-            const checkInterval = 2000;
-  
-            while (!currentUrl.includes('#meet') && attempts < maxCheckAttempts) {
-                logger.info(`Current URL: ${currentUrl}. Waiting for #meet... (Attempt ${attempts + 1}/${maxCheckAttempts})`);
-                await page.waitForTimeout(checkInterval);
-                currentUrl = page.url();
-                attempts++;
-            }
-  
-            logger.info(`Login process completed. Final URL: ${currentUrl}`);
-  
-            // Detailed element check and logging
-            const pageState = await page.evaluate(() => {
-                const elements = {
-                    chatSection: !!document.querySelector('#chat-section'),
-                    userMenu: !!document.querySelector('#user-menu'),
-                    header: !!document.querySelector('header'),
-                    footer: !!document.querySelector('footer'),
-                    body: document.body.innerHTML.length
-                };
-                return {
-                    url: window.location.href,
-                    title: document.title,
-                    elements: elements
-                };
-            });
-  
-            logger.info('Page state after login:', JSON.stringify(pageState, null, 2));
-  
-            if (currentUrl.includes('#meet')) {
-                if (pageState.elements.chatSection || pageState.elements.userMenu) {
-                    logger.info('Successfully logged in and redirected to #meet');
-                    return { page, isLoggedIn: true };
-                } else {
-                    logger.warn('URL contains #meet, but expected elements not found. Considering login successful, but flagging for review.');
-                    return { page, isLoggedIn: true };
-                }
-            } else {
-                logger.error(`Login unsuccessful. Final URL: ${currentUrl}`);
-  
-                // Check for any error messages on the page
-                const errorMessage = await page.evaluate(() => {
-                    const errorElement = document.querySelector('.error-message');
-                    return errorElement ? errorElement.innerText : null;
-                });
-  
-                if (errorMessage) {
-                    logger.error(`Login error message: ${errorMessage}`);
-                }
-  
-                if (attempt < maxAttempts) {
-                    logger.warn(`Login attempt ${attempt} unsuccessful. Retrying in ${waitTime / 1000} seconds...`);
-                    await page.waitForTimeout(waitTime);
-                }
-            }
-        } catch (error) {
-            logger.error(`Error during login attempt ${attempt}: ${error.message}`);
-            if (attempt < maxAttempts) {
-                logger.info(`Retrying login in ${waitTime / 1000} seconds...`);
-                await page.waitForTimeout(waitTime);
-            }
-        }
-    }
-  
-    logger.error('All login attempts failed');
-    return { page, isLoggedIn: false };
+const logger = console;
+let messageCounter = 0;
+let browser;
+let page;
+
+const TIMEOUT = 30000; // 30 seconds
+const NAVIGATION_TIMEOUT = 60000; // 60 seconds
+const SHORT_CHECK_INTERVAL = 1000; // 1 second
+
+async function initBrowser() {
+    browser = await puppeteer.launch({ headless: false });
+    page = await browser.newPage();
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    await loginToMeetMe(page);
 }
 
-async function handlePopUps(page) {
-    const popupSelectors = [
-        '#enable-push-notifications .modal-footer button.btn-primary',
-        '#nav-chat > a > div > span:nth-child(1)'
-    ];
-
-    for (const selector of popupSelectors) {
-        try {
-            await page.waitForSelector(selector, { visible: true, timeout: 5000 });
-            await page.click(selector);
-            logger.info(`Clicked popup: ${selector}`);
-            await page.waitForTimeout(1000);
-        } catch (error) {
-            logger.info(`Popup not found or not clickable: ${selector}`);
-        }
+async function recreatePage() {
+    logger.info('Recreating page...');
+    if (page) {
+        await page.close().catch(e => logger.error('Error closing page:', e));
     }
+    page = await browser.newPage();
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    await loginToMeetMe(page);
 }
 
-async function processMessages(page) {
-    const messages = await page.evaluate(() => {
-        const messageElements = document.querySelectorAll('.message-item');
-        return Array.from(messageElements).map(messageElement => {
-            const username = messageElement.querySelector('.username').textContent;
-            const timeSent = messageElement.querySelector('.time-sent').textContent;
-            const messageHref = messageElement.querySelector('.message-link').href;
-            return { username, timeSent, messageHref };
+async function processMessages() {
+    try {
+        await initBrowser();
+
+        const connection = await amqp.connect('amqp://localhost');
+        const channel = await connection.createChannel();
+        const queue = 'meetme_processed';
+
+        await channel.assertQueue(queue, { durable: true });
+        channel.prefetch(1);
+
+        logger.info('Waiting for messages...');
+
+        channel.consume(queue, async (msg) => {
+            if (msg !== null) {
+                messageCounter++;
+                let message;
+                try {
+                    message = JSON.parse(msg.content.toString());
+                    logger.info(`[${messageCounter}] Processing message for: ${message.original.name}`);
+                    
+                    await sendReply(message);
+                    channel.ack(msg);
+                    logger.info(`[${messageCounter}] Message processed successfully`);
+                } catch (error) {
+                    logger.error(`[${messageCounter}] Error processing message:`, error);
+                    await recreatePage();
+                    channel.nack(msg, false, true);
+                }
+
+                await delay(5000);
+            }
         });
-    });
+    } catch (error) {
+        logger.error('Fatal error in processMessages:', error);
+        if (browser) await browser.close();
+        process.exit(1);
+    }
+}
 
-    for (const message of messages) {
-        logger.info(`Processing message from ${message.username} sent at ${message.timeSent}`);
-        const replyText = `Hello ${message.username}, thanks for reaching out!`;
-        const replySent = await sendReply(page, replyText, message.messageHref);
-        if (replySent) {
-            logger.info(`Reply sent to ${message.username}`);
+async function loginToMeetMe(page) {
+    try {
+        console.log('Starting login process');
+        await page.goto('https://www.meetme.com/#home', { waitUntil: 'networkidle0' });
+        console.log('Page loaded. Current URL:', await page.url());
+
+        // Wait for the loading spinner to disappear
+        console.log('Waiting for page to finish loading');
+        await page.waitForSelector('.nav-initial-loading', { hidden: true, timeout: 30000 });
+
+        // Wait for any login button to appear
+        console.log('Waiting for login button');
+        await page.waitForFunction(() => {
+            return document.querySelector('button, a').innerText.toLowerCase().includes('login') ||
+                   document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
+        }, { timeout: 30000 });
+
+        console.log('Clicking login button');
+        await page.evaluate(() => {
+            const loginButton = Array.from(document.querySelectorAll('button, a')).find(el => 
+                el.innerText.toLowerCase().includes('login') || el.innerText.toLowerCase().includes('sign in')
+            );
+            if (loginButton) loginButton.click();
+        });
+
+        // Pause to allow modal and elements to appear
+        console.log('Waiting for login modal to appear');
+        await delay(3000);  // Use the custom delay function instead of waitForTimeout
+
+        // Wait for login form elements to appear
+        console.log('Waiting for login form elements');
+        await page.waitForFunction(() => {
+            return document.querySelector('input[type="email"]') && 
+                   document.querySelector('input[type="password"]') &&
+                   document.querySelector('button[type="submit"]');
+        }, { timeout: 30000 });
+
+        console.log('Entering credentials');
+        await page.type('input[type="email"]', process.env.MEETME_EMAIL);
+        await page.type('input[type="password"]', process.env.MEETME_PASSWORD);
+
+        console.log('Submitting login form');
+        await page.click('button[type="submit"]');
+
+        console.log('Waiting for navigation after login');
+        await page.waitForNavigation({ timeout: 60000 });
+
+        console.log('Checking if login was successful');
+        const loggedIn = await page.evaluate(() => {
+            return !document.querySelector('button, a').innerText.toLowerCase().includes('login') &&
+                   !document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
+        });
+
+        if (loggedIn) {
+            console.log('Login successful');
         } else {
-            logger.error(`Failed to send reply to ${message.username}`);
+            throw new Error('Login failed');
+        }
+    } catch (error) {
+        console.error('Error during login process:', error);
+        throw error;
+    }
+}
+
+async function sendReply(message) {
+    const chatUrl = message.original.url;
+    logger.info(`[${messageCounter}] Attempting to navigate to: ${chatUrl}`);
+   
+    if (!chatUrl) {
+        throw new Error('Chat URL is undefined');
+    }
+   
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const isLoggedIn = await checkLoginStatus();
+            if (!isLoggedIn) {
+                logger.info(`[${messageCounter}] Not logged in. Attempting to log in...`);
+                await loginToMeetMe(page);
+            }
+
+            await page.goto(chatUrl, { waitUntil: 'networkidle0' });
+            logger.info(`[${messageCounter}] Navigation attempt ${attempt}: Successfully navigated to: ${page.url()}`);
+           
+            let contentLoaded = false;
+            const startTime = Date.now();
+            while (!contentLoaded && Date.now() - startTime < TIMEOUT) {
+                await delay(SHORT_CHECK_INTERVAL);
+                contentLoaded = await page.evaluate(() => {
+                    return document.querySelector('#global-layer-main-content') !== null &&
+                           document.querySelector('textarea[placeholder="Type something…"]') !== null;
+                });
+            }
+
+            if (!contentLoaded) {
+                throw new Error('Failed to load chat page content within timeout');
+            }
+
+            const currentUrl = page.url();
+            logger.info(`[${messageCounter}] Current URL after waiting for content: ${currentUrl}`);
+
+            if (!currentUrl.includes('chat/member')) {
+                throw new Error('Failed to navigate to chat page');
+            }
+
+            logger.info(`[${messageCounter}] Successfully navigated to chat page`);
+
+            const chatInputSelector = 'textarea[placeholder="Type something…"]';
+            await page.waitForSelector(chatInputSelector, { visible: true, timeout: TIMEOUT });
+            await page.evaluate((selector, text) => {
+                const element = document.querySelector(selector);
+                element.value = text;
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+            }, chatInputSelector, message.flowiseResponse.text);
+
+            const sendButtonSelector = 'button[type="submit"]';
+            await page.waitForSelector(sendButtonSelector, { visible: true, timeout: TIMEOUT });
+            await page.evaluate((selector) => {
+                document.querySelector(selector).click();
+            }, sendButtonSelector);
+
+            logger.info(`[${messageCounter}] Message sent successfully`);
+
+            await page.waitForFunction((text) => {
+                const messages = document.querySelectorAll('.chat-message');
+                return Array.from(messages).some(msg => msg.textContent.includes(text));
+            }, { timeout: TIMEOUT }, message.flowiseResponse.text);
+
+            logger.info(`[${messageCounter}] Message confirmed sent`);
+
+            await delay(2000);
+            return;
+        } catch (error) {
+            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${maxRetries}):`, error);
+            if (attempt === maxRetries) {
+                throw error;
+            }
+            await delay(5000 * attempt);
         }
     }
 }
 
-async function sendReplies() {
-    const username = config.MEETME_USERNAME; // Use username from config
-    const password = config.MEETME_PASSWORD; // Use password from config
-
-    const browser = await puppeteer.launch();
-    const page = await browser.newPage();
-
-    const { isLoggedIn } = await loginToMeetMe(page, username, password); // Use constants for username and password
-
-    if (!isLoggedIn) {
-        logger.error('Login failed. Exiting...');
-        await browser.close();
-        return;
+async function checkLoginStatus() {
+    try {
+        return await page.evaluate(() => {
+            return document.querySelector('#site-nav') !== null || 
+                   document.querySelector('#global-layer-main-content') !== null ||
+                   document.querySelector('textarea[placeholder="Type something…"]') !== null ||
+                   document.querySelector('.chat-message') !== null;
+        });
+    } catch (error) {
+        logger.error('Error checking login status:', error);
+        return false;
     }
-
-    // Handle any popups that might appear
-    await handlePopUps(page);
-
-    // Start the message sending process
-    await processMessages(page);
-
-    // Close the browser
-    await browser.close();
 }
 
-// Example usage
-sendReplies();
+function delay(time) {
+    return new Promise(resolve => setTimeout(resolve, time));
+}
+
+processMessages().catch(error => {
+    logger.error('Fatal error in processMessages:', error);
+    if (browser) browser.close();
+    process.exit(1);
+});

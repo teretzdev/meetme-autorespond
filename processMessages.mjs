@@ -6,7 +6,7 @@ import { updateChatHistory, formatChatHistory } from './src/services/sheetServic
 import logger from './src/utils/logger.js';
 
 async function processMessages(db, channel, authClient) {
-  channel.consume('messages_to_process', async (msg) => {
+  channel.consume('meetme_processed', async (msg) => {
     logger.info('Received a message to process'); // Log when a message is received
     if (msg !== null) {
       const message = JSON.parse(msg.content.toString());
