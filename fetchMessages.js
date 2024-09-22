@@ -59,8 +59,22 @@ async function fetchMeetMeMessages() {
       const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
       if (!existingEntry) {
         try {
-          channel.sendToQueue('meetme_processed', Buffer.from(JSON.stringify(message)), { persistent: true });
-          logger.info(`Sent message to 'messages_to_process': ${JSON.stringify(message)}`);
+          // Retrieve and format the user's chat history
+          const userChatHistory = existingChatHistory.filter(entry => entry[0] === message.username);
+          const formattedChatHistory = userChatHistory.map(entry => ({
+            timestamp: entry[1],
+            message: entry[2],
+            href: entry[3]
+          }));
+
+          // Include chat history in the message payload
+          const messageWithHistory = {
+            ...message,
+            chatHistory: formattedChatHistory
+          };
+
+          channel.sendToQueue('meetme_processed', Buffer.from(JSON.stringify(messageWithHistory)), { persistent: true });
+          logger.info(`Sent message with history to 'messages_to_process': ${JSON.stringify(messageWithHistory)}`);
         } catch (error) {
           logger.error(`Failed to send message to 'meetme_processed': ${error.message}`);
         }
@@ -83,3 +97,4 @@ setInterval(fetchMeetMeMessages, fetchInterval);
 
 // Initial run
 fetchMeetMeMessages();
+

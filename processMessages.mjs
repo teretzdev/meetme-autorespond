@@ -4,6 +4,7 @@ import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs'; // Changed
 import { queryJessAI } from './src/services/jessAI.js';
 import { updateChatHistory, formatChatHistory } from './src/services/sheetService.js';
 import logger from './src/utils/logger.js';
+import { ChatHistory } from './chatHistory.mjs'; // Import ChatHistory class
 
 async function processMessages(db, channel, authClient) {
   channel.consume('meetme_processed', async (msg) => {
@@ -12,7 +13,21 @@ async function processMessages(db, channel, authClient) {
       const message = JSON.parse(msg.content.toString());
       try {
         logger.info(`Processing message ${message.id}`);
-        const userHistory = await db.all("SELECT * FROM messages WHERE user = ?", message.username);
+        
+        // Load user's chat history
+        const chatHistory = new ChatHistory();
+        const userHistory = await chatHistory.getHistory(message.username);
+
+        // Skip processing if message is older or same timestamp
+        const isOlderOrSame = userHistory.some(entry => 
+          entry.timestamp >= message.timestamp
+        );
+        if (isOlderOrSame) {
+          logger.info(`Skipping message for user ${message.username} due to older or same timestamp`);
+          channel.ack(msg);
+          return;
+        }
+
         const formattedHistory = formatChatHistory(userHistory);
         
         // Determine the user's phase
@@ -36,6 +51,9 @@ async function processMessages(db, channel, authClient) {
         ]];
         await updateChatHistory(authClient, updates);
         
+        // Update user's chat history
+        await chatHistory.addToHistory(message.username, message, currentPhase);
+
         channel.sendToQueue('replies_to_send', Buffer.from(JSON.stringify({
           id: message.id,
           href: message.href,
@@ -72,3 +90,4 @@ async function startProcessing() {
 }
 
 startProcessing();
+
