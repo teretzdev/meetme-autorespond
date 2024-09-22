@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { google } from 'googleapis';
 import { authorize, getChatHistory, updateChatHistory } from './src/services/sheetService.js';
 import { initializeBrowser, loginToMeetMe, navigateToChatPage, handlePopUps, extractChatData } from './src/services/meetmeService.js';
+import { AIAgent } from './src/agents/aiAgent.js';
 import config from './src/config/config.js';
 import logger from './src/utils/logger.js';
 import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs';
@@ -9,6 +10,8 @@ import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs';
 async function fetchMeetMeMessages() {
   const browser = await puppeteer.launch({ headless: false });
   const page = await browser.newPage();
+
+  const aiAgent = new AIAgent(); // Initialize the AI agent
 
   try {
     const authClient = await authorize();
@@ -59,8 +62,14 @@ async function fetchMeetMeMessages() {
       const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
       if (!existingEntry) {
         try {
+          const userHistory = existingChatHistory.filter(entry => entry[0] === message.username);
+          const formattedHistory = formatChatHistory(userHistory);
+          await aiAgent.processMessage(message.shortMessage, formattedHistory);
+          const aiResponse = aiAgent.getResponse();
+          message.aiResponse = aiResponse.message; // Attach AI response to the message
+
           channel.sendToQueue('meetme_processed', Buffer.from(JSON.stringify(message)), { persistent: true });
-          logger.info(`Sent message to 'messages_to_process': ${JSON.stringify(message)}`);
+          logger.info(`Sent message to 'meetme_processed': ${JSON.stringify(message)}`);
         } catch (error) {
           logger.error(`Failed to send message to 'meetme_processed': ${error.message}`);
         }
@@ -83,3 +92,4 @@ setInterval(fetchMeetMeMessages, fetchInterval);
 
 // Initial run
 fetchMeetMeMessages();
+
