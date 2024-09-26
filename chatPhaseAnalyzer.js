@@ -79,7 +79,7 @@ export function determinePhase(userHistory) {
     }
   }
   return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if no triggers are found
-};
+}
 
 app.post('/analyze-chat', async (req, res) => {
   const { userId, chatHistory } = req.body;

@@ -58,11 +58,27 @@ async function fetchMeetMeMessages() {
     logger.info(`Existing chat history: ${JSON.stringify(existingChatHistory, null, 2)}`);
 
     for (const message of chatData) {
+      // Skip messages that should not be processed
+      if (message.shortMessage.startsWith('Liked your photo!') || 
+          message.shortMessage.startsWith('Seen') || 
+          message.shortMessage.startsWith('Sent')) {
+        logger.info(`Skipping message: ${message.shortMessage}`);
+        continue;
+      }
+
       const userCode = message.href.match(/\/(\d+)\/chat$/)[1];
+      const userHistory = existingChatHistory.filter(entry => entry[0] === message.username);
+      const mostRecentMessage = userHistory.reduce((latest, entry) => entry[1] > latest ? entry[1] : latest, 0);
+
+      // Only process messages newer than the most recent message in the user's history
+      if (message.timeSent <= mostRecentMessage) {
+        logger.info(`Skipping older message: ${message.shortMessage}`);
+        continue;
+      }
+
       const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
       if (!existingEntry) {
         try {
-          const userHistory = existingChatHistory.filter(entry => entry[0] === message.username);
           const formattedHistory = formatChatHistory(userHistory);
           await aiAgent.processMessage(message.shortMessage, formattedHistory);
           const aiResponse = aiAgent.getResponse();

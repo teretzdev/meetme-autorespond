@@ -24,18 +24,25 @@ export class ChatHistory {
         // File doesn't exist, we'll create a new one
       }
 
-      // Combine duplicate message keys
-      const userHistoryEntry = {
-        timestamp: message.timestamp,
-        user: message.name,
-        message: message.message,
-        currentPhase: currentPhase // Now takes the phase as an argument
-      };
+      // Retrieve existing chat history
+      const existingHistory = data.chatHistory;
+      const mostRecentTimestamp = existingHistory.reduce((latest, entry) => Math.max(latest, entry.timestamp), 0);
 
-      data.chatHistory.push(userHistoryEntry);
+      // Check if the message is unique and newer
+      if (message.timestamp > mostRecentTimestamp) {
+        const userHistoryEntry = {
+          timestamp: message.timestamp,
+          user: message.name,
+          message: message.message,
+          currentPhase: currentPhase // Now takes the phase as an argument
+        };
 
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-      console.log(`Message added to history for user ${username} with phase: ${currentPhase}`); // Log phase
+        data.chatHistory.push(userHistoryEntry);
+        await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+        console.log(`Message added to history for user ${username} with phase: ${currentPhase}`); // Log phase
+      } else {
+        console.log(`Skipping duplicate or older message for user ${username}: ${message.message}`);
+      }
     } catch (error) {
       console.error(`Error adding message to history for user ${username}:`, error);
       throw error;
@@ -63,3 +70,4 @@ export class ChatHistory {
 }
 
 export default ChatHistory;
+

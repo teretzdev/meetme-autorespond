@@ -235,3 +235,4 @@ processMessages().catch(error => {
     if (browser) browser.close();
     process.exit(1);
 });
+
