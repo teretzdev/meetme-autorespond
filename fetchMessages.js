@@ -18,8 +18,14 @@ async function fetchMeetMeMessages() {
     const db = await setupDatabase();
     const { channel } = await setupRabbitMQ();
 
-    const isLoggedIn = await loginToMeetMe(page, config.MEETME_USERNAME, config.MEETME_PASSWORD);
-    if (!isLoggedIn) throw new Error('Login failed');
+    let isLoggedIn = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      isLoggedIn = await loginToMeetMe(page, config.MEETME_USERNAME, config.MEETME_PASSWORD);
+      if (isLoggedIn) break;
+      logger.warn(`Login attempt ${attempt} failed. Retrying...`);
+      await page.waitForTimeout(3000); // Wait before retrying
+    }
+    if (!isLoggedIn) throw new Error('Login failed after multiple attempts');
 
     logger.info('Login successful. Waiting before navigating to chat...');
     await page.waitForTimeout(1000);
@@ -33,7 +39,7 @@ async function fetchMeetMeMessages() {
       isChatPageLoaded = await navigateToChatPage(page);
       if (!isChatPageLoaded) {
         logger.error('Failed to navigate to chat page after first retry. Waiting 5 seconds before second retry...');
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(5000);
         await page.reload({ waitUntil: 'networkidle0' });
         isChatPageLoaded = await navigateToChatPage(page);
         if (!isChatPageLoaded) {
@@ -46,8 +52,17 @@ async function fetchMeetMeMessages() {
     await handlePopUps(page);
 
     logger.info('Extracting chat data...');
-    const chatData = await extractChatData(page);
-    logger.info(`Extracted chat data: ${JSON.stringify(chatData, null, 2)}`);
+    let chatData = [];
+    try {
+      chatData = await extractChatData(page);
+      if (!Array.isArray(chatData) || chatData.length === 0) {
+        throw new Error('No chat data extracted or data structure is invalid');
+      }
+      logger.info(`Extracted chat data: ${JSON.stringify(chatData, null, 2)}`);
+    } catch (error) {
+      logger.error(`Error extracting chat data: ${error.message}`);
+      return; // Exit if chat data extraction fails
+    }
 
     if (chatData.length === 0) {
       logger.info('No chat data extracted. Ending process.');

@@ -56,7 +56,7 @@ function analyze(message, userHistory) {
 }
 
 // Change from function declaration to function expression
-export function determinePhase(userHistory) {
+export const determinePhase = function(userHistory) {
   if (!Array.isArray(userHistory) || userHistory.length === 0) {
     console.error('Invalid userHistory passed to determinePhase:', userHistory);
     return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if history is invalid

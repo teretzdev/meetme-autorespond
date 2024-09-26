@@ -11,8 +11,26 @@ export async function queryJessAI(message, chatHistory = '') {
     logger.info(`Formatted input: ${formattedInput}`);
 
     // Send the formatted input to the API
-    const response = await sendMessageToAPI(formattedInput);
-    logger.info(`API response: ${JSON.stringify(response)}`);
+    let response;
+    let attempts = 0;
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
+      try {
+        response = await sendMessageToAPI(formattedInput);
+        if (response && typeof response === 'object') {
+          logger.info(`API response: ${JSON.stringify(response)}`);
+          break;
+        } else {
+          throw new Error('Invalid API response format');
+        }
+      } catch (apiError) {
+        attempts++;
+        logger.warn(`Attempt ${attempts} failed: ${apiError.message}`);
+        if (attempts >= maxAttempts) {
+          throw new Error('Max retry attempts reached');
+        }
+      }
+    }
 
     // Process the response
     const processedResponse = processResponse(response);
@@ -31,8 +49,8 @@ export async function queryJessAI(message, chatHistory = '') {
 
 function processResponse(response) {
   // Extract the message and replyStatus from the API response
-  const message = response.message || 'No response received';
-  const replyStatus = response.replyStatus || 'sent';
+  const message = response && response.message ? response.message : 'No response received';
+  const replyStatus = response && response.replyStatus ? response.replyStatus : 'sent';
 
   // You can add additional processing here if needed
   // For example, you might want to clean up the message or handle specific replyStatus values
@@ -50,3 +68,4 @@ export function restoreReplyStatus(message, chatHistory) {
   // If found, return the stored replyStatus, otherwise return 'unknown'
   return historyEntry ? historyEntry.replyStatus : 'unknown';
 }
+

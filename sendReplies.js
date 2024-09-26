@@ -17,7 +17,14 @@ async function initBrowser() {
     browser = await puppeteer.launch({ headless: false });
     page = await browser.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-    await loginToMeetMe(page);
+    let isLoggedIn = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        isLoggedIn = await loginToMeetMe(page);
+        if (isLoggedIn) break;
+        logger.warn(`Login attempt ${attempt} failed. Retrying...`);
+        await delay(3000); // Wait before retrying
+    }
+    if (!isLoggedIn) throw new Error('Login failed after multiple attempts');
 }
 
 async function recreatePage() {
@@ -72,22 +79,22 @@ async function processMessages() {
 
 async function loginToMeetMe(page) {
     try {
-        console.log('Starting login process');
+        logger.info('Starting login process');
         await page.goto('https://www.meetme.com/#home', { waitUntil: 'networkidle0' });
-        console.log('Page loaded. Current URL:', await page.url());
+        logger.info('Page loaded. Current URL:', await page.url());
 
         // Wait for the loading spinner to disappear
-        console.log('Waiting for page to finish loading');
+        logger.info('Waiting for page to finish loading');
         await page.waitForSelector('.nav-initial-loading', { hidden: true, timeout: 30000 });
 
         // Wait for any login button to appear
-        console.log('Waiting for login button');
+        logger.info('Waiting for login button');
         await page.waitForFunction(() => {
             return document.querySelector('button, a').innerText.toLowerCase().includes('login') ||
                    document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
         }, { timeout: 30000 });
 
-        console.log('Clicking login button');
+        logger.info('Clicking login button');
         await page.evaluate(() => {
             const loginButton = Array.from(document.querySelectorAll('button, a')).find(el => 
                 el.innerText.toLowerCase().includes('login') || el.innerText.toLowerCase().includes('sign in')
@@ -96,41 +103,42 @@ async function loginToMeetMe(page) {
         });
 
         // Pause to allow modal and elements to appear
-        console.log('Waiting for login modal to appear');
+        logger.info('Waiting for login modal to appear');
         await delay(3000);  // Use the custom delay function instead of waitForTimeout
 
         // Wait for login form elements to appear
-        console.log('Waiting for login form elements');
+        logger.info('Waiting for login form elements');
         await page.waitForFunction(() => {
             return document.querySelector('input[type="email"]') && 
                    document.querySelector('input[type="password"]') &&
                    document.querySelector('button[type="submit"]');
         }, { timeout: 30000 });
 
-        console.log('Entering credentials');
+        logger.info('Entering credentials');
         await page.type('input[type="email"]', process.env.MEETME_EMAIL);
         await page.type('input[type="password"]', process.env.MEETME_PASSWORD);
 
-        console.log('Submitting login form');
+        logger.info('Submitting login form');
         await page.click('button[type="submit"]');
 
-        console.log('Waiting for navigation after login');
+        logger.info('Waiting for navigation after login');
         await page.waitForNavigation({ timeout: 60000 });
 
-        console.log('Checking if login was successful');
+        logger.info('Checking if login was successful');
         const loggedIn = await page.evaluate(() => {
             return !document.querySelector('button, a').innerText.toLowerCase().includes('login') &&
                    !document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
         });
 
         if (loggedIn) {
-            console.log('Login successful');
+            logger.info('Login successful');
+            return true;
         } else {
             throw new Error('Login failed');
         }
     } catch (error) {
-        console.error('Error during login process:', error);
-        throw error;
+        logger.error('Error during login process:', error);
+        return false;
     }
 }
 

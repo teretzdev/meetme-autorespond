@@ -4,7 +4,7 @@ import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs'; // Changed
 import { AIAgent } from './src/agents/aiAgent.js';
 import { updateChatHistory, formatChatHistory } from './src/services/sheetService.js';
 import logger from './src/utils/logger.js';
-import { determinePhase } from './chatPhaseAnalyzer.js'; // Import determinePhase
+import { determinePhase, getPhaseNumber } from './chatPhaseAnalyzer.js'; // Import determinePhase and getPhaseNumber
 
 async function processMessages(db, channel, authClient) {
   const aiAgent = new AIAgent(); // Initialize the AI agent
@@ -19,7 +19,7 @@ async function processMessages(db, channel, authClient) {
         
         // Determine the user's phase
         const currentPhase = determinePhase(userHistory);
-        const phaseNumber = getPhaseNumber(currentPhase); // Define or import getPhaseNumber if necessary
+        const phaseNumber = getPhaseNumber(currentPhase); // Use getPhaseNumber to get the phase number
 
         await aiAgent.processMessage(message.shortMessage, formattedHistory); // Use AI agent to process message
         const aiResponse = aiAgent.getResponse(); // Get the response from AI agent
