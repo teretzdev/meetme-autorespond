@@ -56,10 +56,10 @@ function analyze(message, userHistory) {
 }
 
 // Change from function declaration to function expression
-export function determinePhase  (userHistory)  {
+export function determinePhase(userHistory) {
   if (!Array.isArray(userHistory) || userHistory.length === 0) {
     console.error('Invalid userHistory passed to determinePhase:', userHistory);
-    return PHASES.PHASE_1; // Default to Phase 1 if history is invalid
+    return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if history is invalid
   }
 
   const phaseMapping = {
@@ -72,12 +72,13 @@ export function determinePhase  (userHistory)  {
   for (let i = userHistory.length - 1; i >= 0; i--) {
     const message = userHistory[i].message.toLowerCase();
     for (const [phase, keywords] of Object.entries(phaseMapping)) {
-      if (keywords.some(keyword => message.includes(keyword))) {
-        return PHASES[phase];
+      const matchedKeyword = keywords.find(keyword => message.includes(keyword));
+      if (matchedKeyword) {
+        return { phase: PHASES[phase], keyword: matchedKeyword, confidence: 0.9 }; // Return detailed info
       }
     }
   }
-  return PHASES.PHASE_1; // Default to Phase 1 if no triggers are found
+  return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if no triggers are found
 };
 
 app.post('/analyze-chat', async (req, res) => {
@@ -153,3 +154,4 @@ export const chatPhaseAnalyzer = {
     return this.determinePhase(userHistory); // Use this.determinePhase
   }
 };
+

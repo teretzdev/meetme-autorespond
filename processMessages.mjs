@@ -1,12 +1,13 @@
 import { authorize } from './src/auth/googleAuth.js';
 import pkg from './src/utils/setup.cjs';
 import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs'; // Changed from import to require
-import { queryJessAI } from './src/services/jessAI.js';
+import { AIAgent } from './src/agents/aiAgent.js';
 import { updateChatHistory, formatChatHistory } from './src/services/sheetService.js';
 import logger from './src/utils/logger.js';
 import { ChatHistory } from './chatHistory.mjs'; // Import ChatHistory class
 
 async function processMessages(db, channel, authClient) {
+  const aiAgent = new AIAgent(); // Initialize the AI agent
   channel.consume('meetme_processed', async (msg) => {
     logger.info('Received a message to process'); // Log when a message is received
     if (msg !== null) {
@@ -34,7 +35,8 @@ async function processMessages(db, channel, authClient) {
         const currentPhase = determinePhase(userHistory); // Assuming you have a function to determine phase
         const phaseNumber = getPhaseNumber(currentPhase); // Assuming you have a function to get phase number
 
-        const aiResponse = await queryJessAI(message.shortMessage, formattedHistory);
+        await aiAgent.processMessage(message.shortMessage, formattedHistory); // Use AI agent to process message
+        const aiResponse = aiAgent.getResponse(); // Get the response from AI agent
         logger.info(`AI Response for user ${message.username}: ${JSON.stringify(aiResponse)}`);
         
         await db.run("UPDATE messages SET reply_to_send = ?, status = 'processed' WHERE id = ?", [aiResponse.message, message.id]);

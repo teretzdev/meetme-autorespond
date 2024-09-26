@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { google } from 'googleapis';
 import { authorize, getChatHistory, updateChatHistory } from './src/services/sheetService.js';
 import { initializeBrowser, loginToMeetMe, navigateToChatPage, handlePopUps, extractChatData } from './src/services/meetmeService.js';
+import { AIAgent } from './src/agents/aiAgent.js';
 import config from './src/config/config.js';
 import logger from './src/utils/logger.js';
 import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs';
@@ -9,6 +10,8 @@ import { setupDatabase, setupRabbitMQ } from './src/utils/setup.cjs';
 async function fetchMeetMeMessages() {
   const browser = await puppeteer.launch({ headless: false });
   const page = await browser.newPage();
+
+  const aiAgent = new AIAgent(); // Initialize the AI agent
 
   try {
     const authClient = await authorize();
