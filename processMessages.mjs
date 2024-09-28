@@ -38,6 +38,14 @@ async function processMessages(db, channel, authClient) {
         await aiAgent.processMessage(message.shortMessage, formattedHistory); // Use AI agent to process message
         const aiResponse = aiAgent.getResponse(); // Get the response from AI agent
         logger.info(`AI Response for user ${message.username}: ${JSON.stringify(aiResponse)}`);
+
+        // Check for duplicate reply
+        const lastSentMessage = userHistory.reverse().find(entry => entry.user === 'AI');
+        if (lastSentMessage && lastSentMessage.message === aiResponse.message) {
+          logger.info(`Duplicate reply detected for user ${message.username}. Skipping processing.`);
+          channel.ack(msg);
+          return;
+        }
         
         await db.run("UPDATE messages SET reply_to_send = ?, status = 'processed' WHERE id = ?", [aiResponse.message, message.id]);
         

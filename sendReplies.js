@@ -231,8 +231,10 @@ async function sendReply(message) {
         const existingMessages = await scrapeExistingMessages();
         logger.info(`[${messageCounter}] Existing messages: ${JSON.stringify(existingMessages)}`);
 
-        if (isDuplicateMessage(existingMessages, replyText)) {
-            logger.info(`[${messageCounter}] Last message was sent by us. Skipping this reply.`);
+        // Check if the reply is a duplicate of the last sent message
+        const lastSentMessage = existingMessages.reverse().find(msg => msg.isSent);
+        if (lastSentMessage && lastSentMessage.text === replyText) {
+            logger.info(`[${messageCounter}] Duplicate reply detected. Skipping this reply.`);
             return; // Skip to the next message
         }
 
