@@ -29,6 +29,14 @@ async function initBrowser() {
     browser = await puppeteer.launch({ headless: false });
     page = await browser.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    let isLoggedIn = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        isLoggedIn = await loginToMeetMe(page);
+        if (isLoggedIn) break;
+        logger.warn(`Login attempt ${attempt} failed. Retrying...`);
+        await delay(3000); // Wait before retrying
+    }
+    if (!isLoggedIn) throw new Error('Login failed after multiple attempts');
     return loginToMeetMe(page);
 }
 
@@ -101,57 +109,67 @@ async function processNextMessage() {
 }
 
 async function loginToMeetMe(page) {
-    logger.info('Starting MeetMe login process');
-    const maxAttempts = 3;
+    try {
+        logger.info('Starting login process');
+        await page.goto('https://www.meetme.com/#home', { waitUntil: 'networkidle0' });
+        logger.info('Page loaded. Current URL:', await page.url());
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
-            logger.info(`Page loaded. Current URL: ${await page.url()}`);
+        // Wait for the loading spinner to disappear
+        logger.info('Waiting for page to finish loading');
+        await page.waitForSelector('.nav-initial-loading', { hidden: true, timeout: 30000 });
 
-            const isAlreadyLoggedIn = await checkLoginStatus(page);
-            if (isAlreadyLoggedIn) {
-                logger.info('Already logged in.');
-                return true;
-            }
+        // Wait for any login button to appear
+        logger.info('Waiting for login button');
+        await page.waitForFunction(() => {
+            return document.querySelector('button, a').innerText.toLowerCase().includes('login') ||
+                   document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
+        }, { timeout: 30000 });
 
-            const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: TIMEOUT });
-            await loginButton.click();
+        logger.info('Clicking login button');
+        await page.evaluate(() => {
+            const loginButton = Array.from(document.querySelectorAll('button, a')).find(el => 
+                el.innerText.toLowerCase().includes('login') || el.innerText.toLowerCase().includes('sign in')
+            );
+            if (loginButton) loginButton.click();
+        });
 
-            logger.info('Entering credentials');
-            await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: TIMEOUT });
-            
-            await page.type('#site-login-modal-email', process.env.MEETME_EMAIL);
-            await page.type('#site-login-modal-password', process.env.MEETME_PASSWORD);
+        // Pause to allow modal and elements to appear
+        logger.info('Waiting for login modal to appear');
+        await delay(3000);  // Use the custom delay function instead of waitForTimeout
 
-            logger.info('Submitting login form');
-            await Promise.all([
-                page.click('#site-login-modal-submit-group > button'),
-                page.waitForNavigation({ waitUntil: 'networkidle0', timeout: NAVIGATION_TIMEOUT })
-            ]);
+        // Wait for login form elements to appear
+        logger.info('Waiting for login form elements');
+        await page.waitForFunction(() => {
+            return document.querySelector('input[type="email"]') && 
+                   document.querySelector('input[type="password"]') &&
+                   document.querySelector('button[type="submit"]');
+        }, { timeout: 30000 });
 
-            const loginSuccess = await checkLoginStatus(page);
-            if (loginSuccess) {
-                await updateState();
-                logger.info('Successfully logged in to MeetMe');
-                return true;
-            }
+        logger.info('Entering credentials');
+        await page.type('input[type="email"]', process.env.MEETME_EMAIL);
+        await page.type('input[type="password"]', process.env.MEETME_PASSWORD);
 
-            logger.warn(`Login attempt ${attempt} unsuccessful.`);
+        logger.info('Submitting login form');
+        await page.click('button[type="submit"]');
 
-            if (attempt < maxAttempts) {
-                logger.info(`Retrying login in 5 seconds...`);
-                await delay(5000);
-            }
-        } catch (error) {
-            logger.error(`Error during login attempt ${attempt}: ${error.message}`);
-            if (attempt === maxAttempts) {
-                logger.error('Max login attempts reached. Login failed.');
-                return false;
-            }
-            logger.info(`Retrying login in 5 seconds...`);
-            await delay(5000);
+        logger.info('Waiting for navigation after login');
+        await page.waitForNavigation({ timeout: 60000 });
+
+        logger.info('Checking if login was successful');
+        const loggedIn = await page.evaluate(() => {
+            return !document.querySelector('button, a').innerText.toLowerCase().includes('login') &&
+                   !document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
+        });
+
+        if (loggedIn) {
+            logger.info('Login successful');
+            return true;
+        } else {
+            throw new Error('Login failed');
         }
+    } catch (error) {
+        logger.error('Error during login process:', error);
+        return false;
     }
 
     return false;
@@ -394,19 +412,9 @@ async function processMessages() {
     }
 }
 
-// Add this function at the top of your file, after the imports
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+processMessages().catch(error => {
+    logger.error('Fatal error in processMessages:', error);
+    if (browser) browser.close();
+    process.exit(1);
+});
 
-// Main execution
-(async () => {
-    try {
-        await initBrowser();
-        await processMessages(); // This will now handle both state checking and message processing
-    } catch (error) {
-        logger.error('Fatal error:', error);
-        if (browser) await browser.close();
-        process.exit(1);
-    }
-})();

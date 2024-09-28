@@ -15,44 +15,41 @@ export class ChatHistory {
         const fileContent = await fs.readFile(filePath, 'utf8');
         data = JSON.parse(fileContent);
         if (!Array.isArray(data.chatHistory)) {
+          console.warn(`Invalid chat history structure for user ${username}, resetting to empty array.`);
           data.chatHistory = [];
         }
       } catch (error) {
         if (error.code !== 'ENOENT') {
+          console.error(`Error reading file for user ${username}:`, error);
           throw error;
         }
-        // File doesn't exist, we'll create a new one
+        console.info(`No existing history for user ${username}, creating new file.`);
       }
 
-      // Check if the message should be ignored
-      if (message.message.startsWith('Liked your photo!') || 
-          message.message.startsWith('Seen') || 
-          message.message.startsWith('Sent')) {
-        console.log(`Message ignored for user ${username}: ${message.message}`);
-        return;
+      try {
+        // Retrieve existing chat history
+        const existingHistory = data.chatHistory;
+        const mostRecentTimestamp = existingHistory.reduce((latest, entry) => Math.max(latest, entry.timestamp), 0);
+
+        // Check if the message is unique and newer
+        if (message.timestamp > mostRecentTimestamp) {
+          const userHistoryEntry = {
+            timestamp: message.timestamp,
+            user: message.name,
+            message: message.message,
+            currentPhase: currentPhase // Now takes the phase as an argument
+          };
+
+          data.chatHistory.push(userHistoryEntry);
+          await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+          console.info(`Message added to history for user ${username} with phase: ${currentPhase}`); // Log phase
+        } else {
+          console.warn(`Skipping duplicate or older message for user ${username}: ${message.message}`);
+        }
+      } catch (error) {
+        console.error(`Error processing message for user ${username}:`, error);
+        throw error;
       }
-
-      // Check for message uniqueness
-      const isUnique = !data.chatHistory.some(entry => 
-        entry.message === message.message && entry.timestamp === message.timestamp
-      );
-
-      if (!isUnique) {
-        console.log(`Duplicate message skipped for user ${username}: ${message.message}`);
-        return;
-      }
-
-      const userHistoryEntry = {
-        timestamp: message.timestamp,
-        user: message.name,
-        message: message.message,
-        currentPhase: currentPhase
-      };
-
-      data.chatHistory.push(userHistoryEntry);
-
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-      console.log(`Message added to history for user ${username} with phase: ${currentPhase}`);
     } catch (error) {
       console.error(`Error adding message to history for user ${username}:`, error);
       throw error;
