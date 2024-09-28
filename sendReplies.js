@@ -118,24 +118,20 @@ async function loginToMeetMe(page) {
         logger.info('Waiting for page to finish loading');
         await page.waitForSelector('.nav-initial-loading', { hidden: true, timeout: 30000 });
 
-        // Wait for any login button to appear
-        logger.info('Waiting for login button');
-        await page.waitForFunction(() => {
-            return document.querySelector('button, a').innerText.toLowerCase().includes('login') ||
-                   document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
-        }, { timeout: 30000 });
+            const loginSuccess = await checkLoginStatus(page);
+            if (loginSuccess) {
+                logger.info('Login successful.');
+                return true;
+            }
 
-        logger.info('Clicking login button');
-        await page.evaluate(() => {
-            const loginButton = Array.from(document.querySelectorAll('button, a')).find(el => 
-                el.innerText.toLowerCase().includes('login') || el.innerText.toLowerCase().includes('sign in')
-            );
-            if (loginButton) loginButton.click();
-        });
+            const loginButton = await page.waitForSelector('.login-button', { visible: true, timeout: TIMEOUT });
+            await loginButton.click();
 
-        // Pause to allow modal and elements to appear
-        logger.info('Waiting for login modal to appear');
-        await delay(3000);  // Use the custom delay function instead of waitForTimeout
+            logger.info('Entering credentials');
+            await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: TIMEOUT });
+            
+            await page.type('input[name="email"]', process.env.MEETME_EMAIL);
+            await page.type('input[name="password"]', process.env.MEETME_PASSWORD);
 
         // Wait for login form elements to appear
         logger.info('Waiting for login form elements');
@@ -203,7 +199,7 @@ async function sendReply(message) {
 
             // Log the page content for debugging
             const pageContent = await page.content();
-            logger.info(`[${messageCounter}] Page content: ${pageContent.substring(0, 500)}...`);
+            logger.info(`[${messageCounter}] Page content: ${pageContent}`);
 
             // Handle potential popups
             await handlePopups();
@@ -211,11 +207,9 @@ async function sendReply(message) {
 
             // Wait for the chat input to be available
             const chatInputSelectors = [
-                'textarea[placeholder="Type something…"]',
-                'textarea[placeholder="Say something..."]',
-                'textarea[aria-label="Chat input"]',
-                'div[contenteditable="true"][aria-label="Chat input"]',
-                'div[role="textbox"]'
+                'textarea[placeholder="Type a message…"]',
+                'textarea[placeholder="Enter your message..."]',
+                'div[contenteditable="true"][role="textbox"]'
             ];
 
             let chatInput = null;
@@ -314,11 +308,12 @@ async function sendReply(message) {
 
             return;
         } catch (error) {
-            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${MAX_RETRIES}):`, error);
+            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${MAX_RETRIES}): ${error.message}`);
             if (attempt === MAX_RETRIES) {
+                logger.error('Max retries reached. Aborting sendReply.');
                 throw error;
             }
-            await delay(5000 * attempt);
+            await delay(5000);
         }
     }
 }
