@@ -237,7 +237,7 @@ async function sendReply(message) {
         }
 
         // Wait for the textarea to be visible
-        const inputSelector = 'textarea[placeholder="Type something…"], textarea';
+        const inputSelector = 'textarea.chat-input, textarea[placeholder="Type a message..."]';
         const inputElement = await page.waitForSelector(inputSelector, { visible: true, timeout: 30000 });
 
         if (!inputElement) {
@@ -248,7 +248,7 @@ async function sendReply(message) {
         await inputElement.type(replyText);
 
         // Wait for the send button to be enabled
-        const buttonSelector = 'button[type="submit"]';
+        const buttonSelector = 'button.chat-send, button[type="submit"]';
         const sendButton = await page.waitForSelector(buttonSelector, { visible: true, timeout: 10000 });
 
         if (!sendButton) {
@@ -489,3 +489,4 @@ async function logPageStructure() {
         process.exit(1);
     }
 })();
+
