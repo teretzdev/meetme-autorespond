@@ -109,20 +109,20 @@ async function loginToMeetMe(page) {
             await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
             logger.info(`Page loaded. Current URL: ${await page.url()}`);
 
-            const isAlreadyLoggedIn = await checkLoginStatus(page);
-            if (isAlreadyLoggedIn) {
-                logger.info('Already logged in.');
+            const loginSuccess = await checkLoginStatus(page);
+            if (loginSuccess) {
+                logger.info('Login successful.');
                 return true;
             }
 
-            const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: TIMEOUT });
+            const loginButton = await page.waitForSelector('.login-button', { visible: true, timeout: TIMEOUT });
             await loginButton.click();
 
             logger.info('Entering credentials');
             await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: TIMEOUT });
             
-            await page.type('#site-login-modal-email', process.env.MEETME_EMAIL);
-            await page.type('#site-login-modal-password', process.env.MEETME_PASSWORD);
+            await page.type('input[name="email"]', process.env.MEETME_EMAIL);
+            await page.type('input[name="password"]', process.env.MEETME_PASSWORD);
 
             logger.info('Submitting login form');
             await Promise.all([
@@ -185,7 +185,7 @@ async function sendReply(message) {
 
             // Log the page content for debugging
             const pageContent = await page.content();
-            logger.info(`[${messageCounter}] Page content: ${pageContent.substring(0, 500)}...`);
+            logger.info(`[${messageCounter}] Page content: ${pageContent}`);
 
             // Handle potential popups
             await handlePopups();
@@ -193,11 +193,9 @@ async function sendReply(message) {
 
             // Wait for the chat input to be available
             const chatInputSelectors = [
-                'textarea[placeholder="Type something…"]',
-                'textarea[placeholder="Say something..."]',
-                'textarea[aria-label="Chat input"]',
-                'div[contenteditable="true"][aria-label="Chat input"]',
-                'div[role="textbox"]'
+                'textarea[placeholder="Type a message…"]',
+                'textarea[placeholder="Enter your message..."]',
+                'div[contenteditable="true"][role="textbox"]'
             ];
 
             let chatInput = null;
@@ -296,11 +294,12 @@ async function sendReply(message) {
 
             return;
         } catch (error) {
-            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${MAX_RETRIES}):`, error);
+            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${MAX_RETRIES}): ${error.message}`);
             if (attempt === MAX_RETRIES) {
+                logger.error('Max retries reached. Aborting sendReply.');
                 throw error;
             }
-            await delay(5000 * attempt);
+            await delay(5000);
         }
     }
 }
@@ -410,3 +409,4 @@ function delay(ms) {
         process.exit(1);
     }
 })();
+
