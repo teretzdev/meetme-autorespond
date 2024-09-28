@@ -418,3 +418,15 @@ processMessages().catch(error => {
     process.exit(1);
 });
 
+// Main execution
+(async () => {
+    try {
+        await initBrowser();
+        await processMessages(); // This will now handle both state checking and message processing
+    } catch (error) {
+        logger.error('Fatal error:', error);
+        if (browser) await browser.close();
+        process.exit(1);
+    }
+})();
+
