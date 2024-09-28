@@ -56,10 +56,10 @@ function analyze(message, userHistory) {
 }
 
 // Change from function declaration to function expression
-export const determinePhase = function(userHistory) {
+export function determinePhase(userHistory) {
   if (!Array.isArray(userHistory) || userHistory.length === 0) {
     console.error('Invalid userHistory passed to determinePhase:', userHistory);
-    return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if history is invalid
+    return { phase: 'PHASE_1', keyword: null, confidence: 0.5 }; // Default to Phase 1 if history is invalid
   }
 
   const phaseMapping = {
@@ -74,11 +74,11 @@ export const determinePhase = function(userHistory) {
     for (const [phase, keywords] of Object.entries(phaseMapping)) {
       const matchedKeyword = keywords.find(keyword => message.includes(keyword));
       if (matchedKeyword) {
-        return { phase: PHASES[phase], keyword: matchedKeyword, confidence: 0.9 }; // Return detailed info
+        return { phase, keyword: matchedKeyword, confidence: 0.9 }; // Return detailed info
       }
     }
   }
-  return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if no triggers are found
+  return { phase: 'PHASE_1', keyword: null, confidence: 0.5 }; // Default to Phase 1 if no triggers are found
 }
 
 app.post('/analyze-chat', async (req, res) => {
@@ -124,7 +124,7 @@ export const chatPhaseAnalyzer = {
   determinePhase: function(userHistory) {
     if (!Array.isArray(userHistory) || userHistory.length === 0) {
       console.error('Invalid userHistory passed to determinePhase:', userHistory);
-      return PHASES.PHASE_1; // Default to Phase 1 if history is invalid
+      return { phase: 'PHASE_1', keyword: null, confidence: 0.5 }; // Default to Phase 1 if history is invalid
     }
 
     const phaseMapping = {
@@ -138,11 +138,11 @@ export const chatPhaseAnalyzer = {
       const message = userHistory[i].message.toLowerCase();
       for (const [phase, keywords] of Object.entries(phaseMapping)) {
         if (keywords.some(keyword => message.includes(keyword))) {
-          return PHASES[phase];
+          return { phase: PHASES[phase], keyword: matchedKeyword, confidence: 0.9 }; // Return detailed info
         }
       }
     }
-    return PHASES.PHASE_1; // Default to Phase 1 if no triggers are found
+    return { phase: PHASES.PHASE_1, keyword: null, confidence: 0.5 }; // Default to Phase 1 if no triggers are found
   },
 
   analyze: function(userHistory, currentState) {

@@ -1,6 +1,7 @@
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import dotenv from 'dotenv';
 import amqp from 'amqplib';
+import { executablePath } from 'puppeteer';
 
 dotenv.config({ path: './meetme_data/.env' });
 
@@ -8,16 +9,10 @@ const logger = console;
 let messageCounter = 0;
 let browser;
 let page;
-let isLoggedIn = false;
-let currentUrl = '';
-let lastActivityTime = 0;
 
 const TIMEOUT = 30000; // 30 seconds
 const NAVIGATION_TIMEOUT = 45000; // 45 seconds
-const SHORT_CHECK_INTERVAL = 1000; // 1 second
-const MAX_RETRIES = 5;
 const STATE_CHECK_INTERVAL = 5000; // 5 seconds
-const IDLE_TIMEOUT = 3000; // 3 seconds
 
 let state = {
     isLoggedIn: false,
@@ -25,32 +20,41 @@ let state = {
     lastActivityTime: Date.now()
 };
 
-async function initBrowser() {
-    browser = await puppeteer.launch({ headless: false });
-    page = await browser.newPage();
-    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-    let isLoggedIn = false;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        isLoggedIn = await loginToMeetMe(page);
-        if (isLoggedIn) break;
-        logger.warn(`Login attempt ${attempt} failed. Retrying...`);
-        await delay(3000); // Wait before retrying
-    }
-    if (!isLoggedIn) throw new Error('Login failed after multiple attempts');
-    return loginToMeetMe(page);
+
+// Define state variables
+let loginAttempts = 0;
+const MAX_LOGIN_ATTEMPTS = 3;
+
+// Helper function to delay execution
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function checkLoginStatus(page) {
+
+async function initBrowser() {
+    browser = await puppeteer.launch({
+        headless: false, // Set to true in production
+        defaultViewport: null,
+        args: ['--start-maximized'],
+        executablePath: executablePath()
+    });
+    page = await browser.newPage();
+    await loginToMeetMe();
+}
+
+
+async function checkLoginStatus() {
     try {
         const currentUrl = await page.url();
         logger.info(`Checking login status on URL: ${currentUrl}`);
 
-        if (currentUrl.includes('#meet') || currentUrl.includes('app.meetme.com') || currentUrl.includes('#chat/')) {
+        // Recognize #chat as logged in
+        if (currentUrl.includes('#meet') || currentUrl.includes('app.meetme.com') || currentUrl.includes('#chat')) {
             logger.info('On #meet, app page, or chat page, assuming logged in');
             return true;
         }
 
-        // Check for elements that are typically present when logged in
+
         const loggedInSelectors = [
             '#site-nav-user-menu',
             '.site-nav-user-dropdown',
@@ -67,7 +71,6 @@ async function checkLoginStatus(page) {
             }
         }
 
-        // If we can't find any logged-in indicators, assume not logged in
         logger.info('No logged-in indicators found, assuming not logged in');
         return false;
     } catch (error) {
@@ -76,10 +79,17 @@ async function checkLoginStatus(page) {
     }
 }
 
+
 async function updateState() {
+    if (!page) {
+        logger.error('Page is undefined during state update.');
+        return;
+    }
     state.currentUrl = await page.url();
-    state.isLoggedIn = await checkLoginStatus(page);
+    state.isLoggedIn = await checkLoginStatus();
+    state.lastActivityTime = Date.now();
 }
+
 
 async function processNextMessage() {
     try {
@@ -94,334 +104,388 @@ async function processNextMessage() {
             messageCounter++;
             const parsedMessage = JSON.parse(message.content.toString());
             logger.info(`[${messageCounter}] Processing message for: ${parsedMessage.original.name}`);
-            
-            await sendReply(parsedMessage);
-            channel.ack(message);
-            logger.info(`[${messageCounter}] Message processed successfully`);
+
+            // Validate message structure
+            if (parsedMessage.original && parsedMessage.original.url && parsedMessage.flowiseResponse && parsedMessage.flowiseResponse.text) {
+                await sendReply({
+                    href: parsedMessage.original.url,
+                    replyText: parsedMessage.flowiseResponse.text
+                });
+                channel.ack(message);
+                logger.info(`[${messageCounter}] Message processed successfully`);
+            } else {
+                logger.error(`[${messageCounter}] Invalid message format: ${message.content.toString()}`);
+                channel.nack(message, false, false); // Reject the message without requeueing
+            }
         } else {
             logger.info('No messages in queue to process');
         }
 
+        await channel.close();
         await connection.close();
     } catch (error) {
         logger.error('Error processing next message:', error);
     }
 }
 
-async function loginToMeetMe(page) {
+
+async function loginToMeetMe() {
+    if (state.isLoggedIn) {
+        logger.info('Already logged in. Skipping login process.');
+        return true;
+    }
+
+    loginAttempts++;
+    logger.info(`Starting MeetMe login process (Attempt ${loginAttempts}/${MAX_LOGIN_ATTEMPTS})`);
+
     try {
-        logger.info('Starting login process');
-        await page.goto('https://www.meetme.com/#home', { waitUntil: 'networkidle0' });
-        logger.info('Page loaded. Current URL:', await page.url());
+        await page.goto('https://www.meetme.com', { waitUntil: 'networkidle2', timeout: 60000 });
+        logger.info(`Page loaded. Current URL: ${await page.url()}`);
 
-        // Wait for the loading spinner to disappear
-        logger.info('Waiting for page to finish loading');
-        await page.waitForSelector('.nav-initial-loading', { hidden: true, timeout: 30000 });
+        await handlePopUps(page);
 
-            const loginSuccess = await checkLoginStatus(page);
+        // Check if we're already on the beta.meetme.com page
+        if (page.url().includes('beta.meetme.com')) {
+            logger.info('Already on beta.meetme.com, checking login status');
+            const loginSuccess = await checkLoginStatus();
             if (loginSuccess) {
-                logger.info('Login successful.');
+                logger.info('Already logged in on beta.meetme.com');
+                state.isLoggedIn = true;
                 return true;
             }
+        }
 
-            const loginButton = await page.waitForSelector('.login-button', { visible: true, timeout: TIMEOUT });
-            await loginButton.click();
-
-            logger.info('Entering credentials');
-            await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: TIMEOUT });
-            
-            await page.type('input[name="email"]', process.env.MEETME_EMAIL);
-            await page.type('input[name="password"]', process.env.MEETME_PASSWORD);
-
-        // Wait for login form elements to appear
-        logger.info('Waiting for login form elements');
-        await page.waitForFunction(() => {
-            return document.querySelector('input[type="email"]') && 
-                   document.querySelector('input[type="password"]') &&
-                   document.querySelector('button[type="submit"]');
-        }, { timeout: 30000 });
+        // If not on beta.meetme.com or not logged in, proceed with login
+        const loginButton = await page.waitForSelector('#marketing-header-login .btn-black', { visible: true, timeout: 30000 });
+        if (!loginButton) {
+            throw new Error('Login button not found');
+        }
+        await loginButton.click();
 
         logger.info('Entering credentials');
-        await page.type('input[type="email"]', process.env.MEETME_EMAIL);
-        await page.type('input[type="password"]', process.env.MEETME_PASSWORD);
+        await page.waitForSelector('#site-login-modal-email', { visible: true, timeout: 30000 });
+
+        await page.type('#site-login-modal-email', process.env.MEETME_EMAIL);
+        await page.type('#site-login-modal-password', process.env.MEETME_PASSWORD);
 
         logger.info('Submitting login form');
-        await page.click('button[type="submit"]');
+        await Promise.all([
+            page.click('#site-login-modal-submit-group > button'),
+            page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 })
+        ]);
 
-        logger.info('Waiting for navigation after login');
-        await page.waitForNavigation({ timeout: 60000 });
 
-        logger.info('Checking if login was successful');
-        const loggedIn = await page.evaluate(() => {
-            return !document.querySelector('button, a').innerText.toLowerCase().includes('login') &&
-                   !document.querySelector('button, a').innerText.toLowerCase().includes('sign in');
-        });
+        await handlePopUps(page);
 
-        if (loggedIn) {
-            logger.info('Login successful');
+        const newUrl = await page.url();
+        logger.info(`Current URL after login submission: ${newUrl}`);
+
+        const loginSuccess = await checkLoginStatus();
+        if (loginSuccess) {
+            logger.info('Successfully logged in to MeetMe');
+            state.isLoggedIn = true;
             return true;
+        }
+
+        logger.warn(`Login attempt ${loginAttempts} unsuccessful. URL does not indicate successful login.`);
+
+        if (loginAttempts < MAX_LOGIN_ATTEMPTS) {
+            logger.info(`Retrying login in 5 seconds...`);
+            await delay(5000);
+            return loginToMeetMe();
         } else {
-            throw new Error('Login failed');
+            logger.error('Max login attempts reached. Login failed.');
+            return false;
         }
     } catch (error) {
-        logger.error('Error during login process:', error);
+        logger.error(`Error during login: ${error.message}`);
         return false;
     }
-
-    return false;
 }
+
 
 async function sendReply(message) {
-    state.lastActivityTime = Date.now();
-    const chatUrl = message.original.url;
-    logger.info(`[${messageCounter}] Attempting to navigate to: ${chatUrl}`);
-   
-    if (!chatUrl) {
-        throw new Error('Chat URL is undefined');
+    const { href, replyText } = message;
+
+    if (!href) {
+        logger.error(`[${messageCounter}] Missing 'href' in message. Skipping reply.`);
+        return;
     }
-   
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            if (!browser || !browser.isConnected() || !page) {
-                logger.info(`Browser or page not available. Reinitializing...`);
-                const loginSuccess = await initBrowser();
-                if (!loginSuccess) {
-                    throw new Error('Failed to initialize browser and log in');
-                }
-            }
 
-            await page.goto(chatUrl, { waitUntil: 'networkidle0', timeout: NAVIGATION_TIMEOUT });
-            await updateState();
-            logger.info(`[${messageCounter}] Navigation attempt ${attempt}: Successfully navigated to: ${await page.url()}`);
-           
-            // Wait for additional time to ensure dynamic content is loaded
-            await delay(5000);
+    logger.info(`[${messageCounter}] Attempting to navigate to: ${href}`);
 
-            // Log the page content for debugging
-            const pageContent = await page.content();
-            logger.info(`[${messageCounter}] Page content: ${pageContent}`);
+    try {
+        await page.goto(href, { waitUntil: 'networkidle2', timeout: 60000 });
+        logger.info(`[${messageCounter}] Successfully navigated to: ${href}`);
 
-            // Handle potential popups
-            await handlePopups();
-            await handleEnableButton();  // Add this line to specifically handle the Enable button
+        // Wait for the page to load
+        await page.waitForSelector('body', { timeout: 30000 });
 
-            // Wait for the chat input to be available
-            const chatInputSelectors = [
-                'textarea[placeholder="Type a message…"]',
-                'textarea[placeholder="Enter your message..."]',
-                'div[contenteditable="true"][role="textbox"]'
-            ];
+        // Log relevant page structure
+        await logPageStructure();
 
-            let chatInput = null;
-            for (let i = 0; i < 3; i++) {  // Try up to 3 times
-                await handlePopups();  // Handle popups before each attempt
-                for (const selector of chatInputSelectors) {
-                    chatInput = await page.$(selector);
-                    if (chatInput) {
-                        logger.info(`[${messageCounter}] Chat input found with selector: ${selector}`);
-                        break;
-                    }
-                }
-                if (chatInput) break;
-                await delay(2000);  // Wait 2 seconds before trying again
-            }
+        // Wait for any dynamic content to load
+        await delay(5000);
 
-            if (!chatInput) {
-                throw new Error('Chat input not found');
-            }
+        // Scrape existing messages
+        const existingMessages = await scrapeExistingMessages();
+        logger.info(`[${messageCounter}] Existing messages: ${JSON.stringify(existingMessages)}`);
 
-            logger.info(`[${messageCounter}] Chat input found. Proceeding with message sending.`);
-
-            // Scroll the chat input into view
-            await chatInput.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-            await delay(1000);  // Wait for scroll to complete
-
-            await handlePopups();  // Handle popups again before interacting with chat input
-
-            try {
-                // Try to click and type normally
-                await chatInput.click({ clickCount: 3 });
-                await chatInput.press('Backspace');
-                await chatInput.type(message.flowiseResponse.text, { delay: 10 });
-            } catch (clickError) {
-                logger.warn(`[${messageCounter}] Failed to click chat input. Attempting to set value directly.`);
-                // If clicking fails, try to set the value directly
-                await page.evaluate((selector, text) => {
-                    const element = document.querySelector(selector);
-                    if (element) {
-                        element.value = text;
-                        element.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                }, chatInputSelectors[0], message.flowiseResponse.text);
-            }
-
-            // Wait for the submit button to be visible and enabled
-            const submitButtonSelectors = [
-                'button[type="submit"]',
-                'button[aria-label="Send"]',
-                'button.chat-input-submit'
-            ];
-
-            let submitButton = null;
-            for (const selector of submitButtonSelectors) {
-                submitButton = await page.$(selector);
-                if (submitButton) {
-                    logger.info(`[${messageCounter}] Submit button found with selector: ${selector}`);
-                    break;
-                }
-            }
-
-            if (!submitButton) {
-                throw new Error('Submit button not found');
-            }
-
-            // Click the submit button
-            try {
-                await submitButton.click();
-                logger.info(`[${messageCounter}] Submit button clicked to send message`);
-            } catch (submitError) {
-                logger.warn(`[${messageCounter}] Failed to click submit button. Attempting to trigger submit event.`);
-                await page.evaluate((selector) => {
-                    const button = document.querySelector(selector);
-                    if (button) {
-                        button.click();
-                    }
-                }, submitButtonSelectors[0]);
-            }
-
-            // Wait for the message to appear in the chat
-            await page.waitForFunction(
-                (text) => {
-                    const messages = document.querySelectorAll('.chat-message-outgoing');
-                    return Array.from(messages).some(msg => msg.textContent.includes(text.substring(0, 50)));
-                },
-                { timeout: TIMEOUT },
-                message.flowiseResponse.text
-            );
-
-            logger.info(`[${messageCounter}] Message content found in chat`);
-            logger.info(`[${messageCounter}] Send reply process completed successfully`);
-
-            // Navigate back to the #meet page
-            await page.goto('https://beta.meetme.com/#meet', { waitUntil: 'networkidle0', timeout: NAVIGATION_TIMEOUT });
-            logger.info(`[${messageCounter}] Returned to #meet page`);
-
-            return;
-        } catch (error) {
-            logger.error(`[${messageCounter}] Error in sendReply (attempt ${attempt}/${MAX_RETRIES}): ${error.message}`);
-            if (attempt === MAX_RETRIES) {
-                logger.error('Max retries reached. Aborting sendReply.');
-                throw error;
-            }
-            await delay(5000);
+        if (isDuplicateMessage(existingMessages, replyText)) {
+            logger.info(`[${messageCounter}] Last message was sent by us. Skipping this reply.`);
+            return; // Skip to the next message
         }
+
+        // Wait for the textarea to be visible
+        const inputSelector = 'textarea[placeholder="Type something…"], textarea';
+        const inputElement = await page.waitForSelector(inputSelector, { visible: true, timeout: 30000 });
+
+        if (!inputElement) {
+            throw new Error(`Input element not found with selector: ${inputSelector}`);
+        }
+
+        // Type the reply
+        await inputElement.type(replyText);
+
+        // Wait for the send button to be enabled
+        const buttonSelector = 'button[type="submit"]';
+        const sendButton = await page.waitForSelector(buttonSelector, { visible: true, timeout: 10000 });
+
+        if (!sendButton) {
+            throw new Error(`Send button not found with selector: ${buttonSelector}`);
+        }
+
+        // Click the send button
+        await sendButton.click();
+
+        // Wait for a short time to allow the message to be sent
+        await delay(2000);
+
+        logger.info(`[${messageCounter}] Reply sent successfully`);
+    } catch (error) {
+        logger.error(`[${messageCounter}] Error in sendReply: ${error.message}`);
+        // Log the current page structure if there's an error
+        await logPageStructure();
     }
 }
 
-async function handlePopups() {
-    const popupSelectors = [
-        '.modal-close',
-        '.close-button',
-        '[aria-label="Close"]',
-        '.dismiss-button',
-        // Add more selectors for different types of popups
-    ];
 
-    for (const selector of popupSelectors) {
-        try {
-            const closeButton = await page.$(selector);
-            if (closeButton) {
-                await closeButton.click();
-                logger.info(`Closed popup with selector: ${selector}`);
-                await delay(1000);  // Wait for popup to close
-            }
-        } catch (error) {
-            logger.warn(`Failed to close popup with selector: ${selector}`);
-        }
+async function logPageState(currentPage) {
+    if (!currentPage) {
+        logger.error('logPageState called with undefined page');
+        return;
     }
-
-    // Handle "Enable" button
     try {
-        const enableButton = await page.$('button:contains("Enable")');
-        if (enableButton) {
-            await enableButton.click();
-            logger.info('Clicked "Enable" button');
-            await delay(2000);  // Wait for any changes after clicking Enable
-        }
-    } catch (error) {
-        logger.warn('Failed to click "Enable" button:', error);
-    }
+        const url = await currentPage.url();
+        const content = await currentPage.content();
+        logger.info(`Current URL: ${url}`);
+        logger.info(`Page content (first 500 characters): ${content.substring(0, 500)}`);
 
-    // Handle any "Block" buttons that might appear
-    try {
-        const blockButton = await page.$('button:contains("Block")');
-        if (blockButton) {
-            await blockButton.click();
-            logger.info('Clicked "Block" button');
-            await delay(1000);
-        }
+        const buttonState = await currentPage.evaluate(() => {
+            const button = document.querySelector('button[type="submit"]');
+            return button ? {
+                disabled: button.disabled,
+                visible: button.offsetParent !== null,
+                text: button.textContent.trim()
+            } : 'Button not found';
+        });
+        logger.info(`Send button state: ${JSON.stringify(buttonState)}`);
     } catch (error) {
-        logger.warn('Failed to click "Block" button');
+        logger.error(`Error in logPageState: ${error.message}`);
     }
 }
+
+
+async function handlePopUps(page) {
+    try {
+        logger.info('Handling pop-ups or overlays...');
+
+        const selectors = [
+            '#enable-push-notifications .modal-footer button.btn-primary',
+            '#nav-chat > a > div > span:nth-child(1)',
+            '.modal-content button.btn-primary',
+            '.modal-footer button.btn-secondary',
+            'button[data-testid="push-notifications-dismiss"]'
+        ];
+
+
+        for (const selector of selectors) {
+            const element = await page.$(selector);
+            if (element) {
+                await element.click();
+                logger.info(`Clicked on ${selector}`);
+                await delay(1000); // Wait for 1 second after each click
+            }
+        }
+
+
+        logger.info('Pop-ups or overlays handled.');
+    } catch (error) {
+        logger.error(`Error during pop-up handling: ${error.message}`);
+        // Don't throw the error, just log it
+    }
+}
+
 
 async function handleEnableButton() {
     try {
-        const enableButton = await page.evaluateHandle(() => {
+        const enableButton = await page.evaluate(() => {
             const buttons = Array.from(document.querySelectorAll('button'));
             return buttons.find(button => button.textContent.includes('Enable'));
         });
 
         if (enableButton) {
-            await enableButton.click();
+            await page.evaluate((btn) => btn.click(), enableButton);
             logger.info('Clicked "Enable" button');
             await delay(2000);  // Wait for any changes after clicking Enable
             return true;
+        } else {
+            logger.info('No "Enable" button found. Proceeding without clicking.');
+            return false;
         }
     } catch (error) {
-        logger.warn('Failed to find or click "Enable" button:', error);
-    }
-    return false;
-}
-
-async function processMessages() {
-    while (true) {
-        try {
-            await updateState();
-            logger.info(`Current state - URL: ${state.currentUrl}, Logged in: ${state.isLoggedIn}, Last activity: ${new Date(state.lastActivityTime).toISOString()}`);
-
-            const currentTime = Date.now();
-            const idleTime = currentTime - state.lastActivityTime;
-
-            if (state.isLoggedIn || idleTime > IDLE_TIMEOUT) {
-                logger.info(`Conditions met for processing messages. Logged in: ${state.isLoggedIn}, Idle time: ${idleTime}ms`);
-                await processNextMessage();
-                state.lastActivityTime = currentTime; // Reset the last activity time after processing a message
-            } else {
-                logger.info(`Not processing messages. Logged in: ${state.isLoggedIn}, Idle time: ${idleTime}ms`);
-            }
-        } catch (error) {
-            logger.error('Error in processMessages:', error);
-        }
-        await delay(STATE_CHECK_INTERVAL);
+        logger.warn('Error while handling Enable button:', error);
+        return false;
     }
 }
 
-processMessages().catch(error => {
-    logger.error('Fatal error in processMessages:', error);
-    if (browser) browser.close();
-    process.exit(1);
-});
+
+// Function to retrieve previous messages from the chat
+async function getPreviousMessages() {
+    try {
+        // Wait for any content to load
+        await page.waitForSelector('body', { timeout: 30000 });
+
+        const messages = await page.evaluate(() => {
+            // Log the entire body content for debugging
+            console.log("Body content:", document.body.innerHTML);
+
+            const messageElements = document.querySelectorAll('.chat-message, .message, [class*="message"]');
+            console.log("Found message elements:", messageElements.length);
+
+            return Array.from(messageElements).map(el => {
+                console.log("Message element:", el.outerHTML);
+                return {
+                    text: el.textContent.trim(),
+                    isSent: el.classList.contains('chat-message-sent') || el.classList.contains('sent') || el.classList.contains('outgoing'),
+                    html: el.outerHTML
+                };
+            });
+        });
+
+        logger.info(`Retrieved ${messages.length} previous messages`);
+        logger.info(`Messages: ${JSON.stringify(messages)}`);
+        return messages;
+    } catch (error) {
+        logger.error('Error retrieving previous messages:', error);
+        return [];
+    }
+}
+
+
+// Function to check if a message is a duplicate
+function isDuplicateMessage(existingMessages, newMessage) {
+    if (existingMessages.length === 0) {
+        return false;
+    }
+
+    const lastMessage = existingMessages[existingMessages.length - 1];
+    const isDuplicate = lastMessage.isSent;
+
+    logger.info(`Last message was sent by us (has 'Sent' status): ${isDuplicate}`);
+    logger.info(`Last message: ${JSON.stringify(lastMessage)}`);
+    logger.info(`New message to send: "${newMessage}"`);
+
+    return isDuplicate;
+}
+
+
+async function logChatStructure() {
+    try {
+        const structure = await page.evaluate(() => {
+            const body = document.body;
+            const chatContainer = document.querySelector('.chat-messages, #chat-container');
+            const textArea = document.querySelector('textarea[placeholder="Type something…"], input[type="text"]');
+            const sendButton = document.querySelector('button[type="submit"], button:contains("Send")');
+            
+            return {
+                bodyClasses: body.className,
+                chatContainer: chatContainer ? chatContainer.outerHTML : 'Not found',
+                textArea: textArea ? textArea.outerHTML : 'Not found',
+                sendButton: sendButton ? sendButton.outerHTML : 'Not found',
+                bodyChildren: Array.from(body.children).map(child => ({
+                    tagName: child.tagName,
+                    id: child.id,
+                    className: child.className
+                }))
+            };
+        });
+        logger.info(`Chat structure: ${JSON.stringify(structure, null, 2)}`);
+    } catch (error) {
+        logger.error('Error logging chat structure:', error);
+    }
+}
+
+async function scrapeExistingMessages() {
+    try {
+        return await page.evaluate(() => {
+            const messageElements = document.querySelectorAll('.chat-message:not(.chat-no-messages)');
+            console.log("Found message elements:", messageElements.length);
+            const messages = Array.from(messageElements).map(el => {
+                const textElement = el.querySelector('.chat-message-text');
+                const sentIndicator = el.querySelector('.chat-message-status');
+                return {
+                    text: textElement ? textElement.textContent.trim() : '',
+                    isSent: sentIndicator && sentIndicator.textContent.trim().toLowerCase() === 'sent',
+                    html: el.outerHTML
+                };
+            }).filter(msg => msg.text !== ''); // Filter out empty messages
+            console.log("Processed messages:", messages);
+            return messages;
+        });
+    } catch (error) {
+        logger.error('Error scraping existing messages:', error);
+        return [];
+    }
+}
+
+async function logPageStructure() {
+    try {
+        const structure = await page.evaluate(() => {
+            const chatContainer = document.querySelector('.chat-messages, #chat-container');
+            const textArea = document.querySelector('textarea[placeholder="Type something…"], textarea');
+            const sendButton = document.querySelector('button[type="submit"]');
+            
+            return {
+                url: window.location.href,
+                chatContainer: chatContainer ? chatContainer.outerHTML : 'Not found',
+                textArea: textArea ? textArea.outerHTML : 'Not found',
+                sendButton: sendButton ? sendButton.outerHTML : 'Not found',
+                bodyChildren: Array.from(document.body.children).map(child => ({
+                    tagName: child.tagName,
+                    id: child.id,
+                    className: child.className
+                }))
+            };
+        });
+        logger.info(`Page structure: ${JSON.stringify(structure, null, 2)}`);
+    } catch (error) {
+        logger.error('Error logging page structure:', error);
+    }
+}
 
 // Main execution
 (async () => {
     try {
         await initBrowser();
-        await processMessages(); // This will now handle both state checking and message processing
+        while (true) {
+            await updateState();
+            await processNextMessage();
+            await delay(STATE_CHECK_INTERVAL);
+        }
     } catch (error) {
         logger.error('Fatal error:', error);
         if (browser) await browser.close();
         process.exit(1);
     }
 })();
-

@@ -1,6 +1,7 @@
 import express from 'express';
-import amqp from 'amqplib';
 import bodyParser from 'body-parser';
+import amqp from 'amqplib';
+import { determinePhase } from './chatPhaseAnalyzer.js';
 
 class ApiToRabbitMQBridge {
   constructor(port = 2090, rabbitmqUrl = 'amqp://localhost', queueName = 'meetme_queue') {
@@ -25,25 +26,27 @@ class ApiToRabbitMQBridge {
     console.log('Request body:', req.body);
 
     const { name, message, timestamp, url } = req.body;
-    
+
     if (!this.validateInput(name, message, timestamp, url)) {
       console.warn('Missing required fields in request');
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
-    // Determine the phase based on the message content
-    const phase = determinePhase(message); // Assuming you have a function to determine the phase
 
-    const data = { name, message, timestamp, url, phase }; // Include phase in the data
-    console.log('Validated data:', data);
-    
     try {
+      // Determine the phase based on the message content
+      const userHistory = [{ message }]; // Create a user history array for phase determination
+      const { phase: currentPhase } = determinePhase(userHistory); // Get the current phase
+
+      const data = { name, message, timestamp, url, currentPhase }; // Include currentPhase in the data
+      console.log('Validated data:', data);
+
       await this.sendToRabbitMQ(data);
       console.log('Successfully sent data to RabbitMQ');
       res.status(200).json({ message: 'Data received and sent to RabbitMQ' });
     } catch (error) {
-      console.error('Error sending data to RabbitMQ:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('Error processing message:', error);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
     }
   }
 

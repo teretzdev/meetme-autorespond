@@ -36,8 +36,6 @@ class ApiToRabbitMQBridge {
   }
 
   async handleMessage(req, res) {
-    // Import chatPhaseAnalyzer
-    const { chatPhaseAnalyzer } = await import('./chatPhaseAnalyzer.js');
     console.log('Received POST request to /api/message');
 
     const { name, message, timestamp, url } = req.body;
@@ -47,20 +45,24 @@ class ApiToRabbitMQBridge {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Determine the phase based on the message content
-    const userHistory = [{ message }]; // Create a user history array for phase determination
-    const currentPhase = chatPhaseAnalyzer.determinePhase(userHistory); // Get the current phase
-
-    const data = { name, message, timestamp, url, currentPhase }; // Include currentPhase in the data
-    console.log('Validated data:', data);
-
     try {
+      // Import chatPhaseAnalyzer
+      const { determinePhase } = await import('./chatPhaseAnalyzer.js');
+
+      // Determine the phase based on the message content
+      const userHistory = [{ message }]; // Create a user history array for phase determination
+      const { phase: currentPhase } = determinePhase(userHistory); // Get the current phase
+
+      const data = { name, message, timestamp, url, currentPhase }; // Include currentPhase in the data
+      console.log('Validated data:', data);
+
       await this.sendToRabbitMQ(data);
       console.log('Successfully sent data to RabbitMQ');
       res.status(200).json({ message: 'Data received and sent to RabbitMQ' });
     } catch (error) {
-      console.error('Error sending data to RabbitMQ:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('Error processing message:', error);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
     }
   }
 
