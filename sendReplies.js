@@ -228,14 +228,13 @@ async function sendReply(message) {
         await delay(5000);
 
         // Scrape existing messages
-        const existingMessages = await scrapeExistingMessages();
-        logger.info(`[${messageCounter}] Existing messages: ${JSON.stringify(existingMessages)}`);
+        const { userId, messages } = await scrapeExistingMessages();
+        logger.info(`[${messageCounter}] Existing messages for user ${userId}: ${JSON.stringify(messages)}`);
 
-        // Check if the reply is a duplicate of the last sent message
-        const lastSentMessage = existingMessages.reverse().find(msg => msg.isSent);
-        if (lastSentMessage && lastSentMessage.text === replyText) {
-            logger.info(`[${messageCounter}] Duplicate reply detected. Skipping this reply.`);
-            return; // Skip to the next message
+        // Check for duplicate message
+        if (userId && userLatestMessages[userId] === replyText) {
+            logger.info(`[${messageCounter}] Duplicate message detected for user ${userId}. Skipping this reply.`);
+            return;
         }
 
         // Wait for the textarea to be visible
@@ -243,27 +242,58 @@ async function sendReply(message) {
         const inputElement = await page.waitForSelector(inputSelector, { visible: true, timeout: 30000 });
 
         if (!inputElement) {
+            logger.error(`[${messageCounter}] Input element not found with selector: ${inputSelector}`);
             throw new Error(`Input element not found with selector: ${inputSelector}`);
         }
 
+        logger.info(`[${messageCounter}] Input element found. Attempting to type reply.`);
+
         // Type the reply
         await inputElement.type(replyText);
+        logger.info(`[${messageCounter}] Reply typed into input element.`);
 
         // Wait for the send button to be enabled
         const buttonSelector = 'button.chat-send, button[type="submit"]';
         const sendButton = await page.waitForSelector(buttonSelector, { visible: true, timeout: 10000 });
 
         if (!sendButton) {
+            logger.error(`[${messageCounter}] Send button not found with selector: ${buttonSelector}`);
             throw new Error(`Send button not found with selector: ${buttonSelector}`);
         }
 
-        // Click the send button
-        await sendButton.click();
+        logger.info(`[${messageCounter}] Send button found. Attempting to click.`);
+
+        // Click the send button using JavaScript
+        await page.evaluate((selector) => {
+            const button = document.querySelector(selector);
+            if (button) {
+                button.click();
+                console.log('Send button clicked via JavaScript');
+            } else {
+                console.log('Send button not found in evaluate');
+            }
+        }, buttonSelector);
+
+        logger.info(`[${messageCounter}] Send button click attempted via JavaScript.`);
 
         // Wait for a short time to allow the message to be sent
         await delay(2000);
 
-        logger.info(`[${messageCounter}] Reply sent successfully`);
+        // Check if the message was actually sent
+        const messagesSentAfter = await scrapeExistingMessages();
+        const messageSent = messagesSentAfter.messages.some(msg => msg.text === replyText && msg.isSent);
+
+        if (messageSent) {
+            logger.info(`[${messageCounter}] Reply sent successfully`);
+            // Update latest message for user
+            if (userId) {
+                userLatestMessages[userId] = replyText;
+                logger.info(`[${messageCounter}] Updated latest message for user ${userId}: "${replyText}"`);
+            }
+        } else {
+            logger.error(`[${messageCounter}] Failed to send reply. Message not found in chat after sending.`);
+        }
+
     } catch (error) {
         logger.error(`[${messageCounter}] Error in sendReply: ${error.message}`);
         // Log the current page structure if there's an error
@@ -430,24 +460,32 @@ async function logChatStructure() {
 
 async function scrapeExistingMessages() {
     try {
-        return await page.evaluate(() => {
+        const result = await page.evaluate(() => {
             const messageElements = document.querySelectorAll('.chat-message:not(.chat-no-messages)');
             console.log("Found message elements:", messageElements.length);
             const messages = Array.from(messageElements).map(el => {
                 const textElement = el.querySelector('.chat-message-text');
                 const sentIndicator = el.querySelector('.chat-message-status');
+                console.log("Message element:", el.outerHTML);
+                console.log("Text element:", textElement ? textElement.outerHTML : "Not found");
+                console.log("Sent indicator:", sentIndicator ? sentIndicator.outerHTML : "Not found");
                 return {
                     text: textElement ? textElement.textContent.trim() : '',
-                    isSent: sentIndicator && sentIndicator.textContent.trim().toLowerCase() === 'sent',
+                    isSent: el.classList.contains('chat-message-sent') || el.classList.contains('outgoing'),
                     html: el.outerHTML
                 };
             }).filter(msg => msg.text !== ''); // Filter out empty messages
-            console.log("Processed messages:", messages);
-            return messages;
+            console.log("Processed messages:", JSON.stringify(messages, null, 2));
+            
+            // Get user ID from the URL
+            const userId = window.location.href.split('/').pop();
+            return { userId, messages };
         });
+        logger.info(`Scraped messages: ${JSON.stringify(result, null, 2)}`);
+        return result;
     } catch (error) {
         logger.error('Error scraping existing messages:', error);
-        return [];
+        return { userId: null, messages: [] };
     }
 }
 
@@ -460,19 +498,56 @@ async function logPageStructure() {
             
             return {
                 url: window.location.href,
-                chatContainer: chatContainer ? chatContainer.outerHTML : 'Not found',
-                textArea: textArea ? textArea.outerHTML : 'Not found',
-                sendButton: sendButton ? sendButton.outerHTML : 'Not found',
-                bodyChildren: Array.from(document.body.children).map(child => ({
-                    tagName: child.tagName,
-                    id: child.id,
-                    className: child.className
-                }))
+                chatContainer: chatContainer ? 'Found' : 'Not found',
+                textArea: textArea ? 'Found' : 'Not found',
+                sendButton: sendButton ? 'Found' : 'Not found',
+                relevantElements: {
+                    chatMessages: document.querySelectorAll('.chat-message').length,
+                    textareas: document.querySelectorAll('textarea').length,
+                    submitButtons: document.querySelectorAll('button[type="submit"]').length
+                }
             };
         });
         logger.info(`Page structure: ${JSON.stringify(structure, null, 2)}`);
     } catch (error) {
         logger.error('Error logging page structure:', error);
+    }
+}
+
+let messageHistory = []
+
+function addToHistory(message, timestamp) {
+    // Check if a similar message was sent within the last 5 minutes
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    const isDuplicate = messageHistory.some(entry => 
+        entry.text.toLowerCase() === message.toLowerCase() &&
+        entry.timestamp > fiveMinutesAgo
+    );
+
+    if (isDuplicate) {
+        logger.info(`Duplicate message detected: "${message}". Skipping.`);
+        return false;
+    }
+
+    // Add the new message to history
+    messageHistory.push({ text: message, timestamp: timestamp || Date.now() });
+
+    // Keep only the last 100 messages in history
+    if (messageHistory.length > 100) {
+        messageHistory = messageHistory.slice(-100);
+    }
+
+    return true;
+}
+
+let userLatestMessages = {};
+
+function cleanupUserMessages() {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    for (const userId in userLatestMessages) {
+        if (userLatestMessages[userId].timestamp < oneHourAgo) {
+            delete userLatestMessages[userId];
+        }
     }
 }
 
@@ -483,6 +558,7 @@ async function logPageStructure() {
         while (true) {
             await updateState();
             await processNextMessage();
+            cleanupUserMessages();
             await delay(STATE_CHECK_INTERVAL);
         }
     } catch (error) {
