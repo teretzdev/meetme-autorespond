@@ -91,11 +91,16 @@ async function fetchMeetMeMessages() {
         continue;
       }
 
-      const existingEntry = existingChatHistory.find(entry => entry[3] === message.href && entry[2] === message.shortMessage);
-      if (!existingEntry) {
-        try {
-          // Retrieve and format the user's chat history
-          const userChatHistory = existingChatHistory.filter(entry => entry[0] === message.username);
+      // Check for duplicate message
+      const mostRecentEntry = userHistory.reverse().find(entry => entry.message === message.shortMessage && entry.timestamp === message.timeSent);
+      if (mostRecentEntry) {
+        logger.info(`Duplicate message detected for user ${message.username}. Skipping processing.`);
+        continue;
+      }
+
+      try {
+        // Retrieve and format the user's chat history
+        const userChatHistory = existingChatHistory.filter(entry => entry[0] === message.username);
           const formattedChatHistory = userChatHistory.map(entry => ({
             timestamp: entry[1],
             message: entry[2],

@@ -32,7 +32,11 @@ export class ChatHistory {
         const mostRecentTimestamp = existingHistory.reduce((latest, entry) => Math.max(latest, entry.timestamp), 0);
 
         // Check if the message is unique and newer
-        if (message.timestamp > mostRecentTimestamp) {
+        const isDuplicate = existingHistory.some(entry => 
+          entry.timestamp === message.timestamp && entry.message === message.message
+        );
+
+        if (!isDuplicate && message.timestamp > mostRecentTimestamp) {
           const userHistoryEntry = {
             timestamp: message.timestamp,
             user: message.name,
