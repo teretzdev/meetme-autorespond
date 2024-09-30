@@ -33,7 +33,7 @@ function delay(ms) {
 
 async function initBrowser() {
     browser = await puppeteer.launch({
-        headless: false, // Set to true in production
+        headless: true, // Set to true for headless operation
         defaultViewport: null,
         args: ['--start-maximized'],
         executablePath: executablePath()
