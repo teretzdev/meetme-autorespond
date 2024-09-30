@@ -551,20 +551,31 @@ function cleanupUserMessages() {
     }
 }
 
-// Main execution
-(async () => {
-    try {
-        await initBrowser();
-        while (true) {
-            await updateState();
-            await processNextMessage();
-            cleanupUserMessages();
-            await delay(STATE_CHECK_INTERVAL);
+function main() {
+    (async () => {
+        try {
+            await initBrowser();
+            while (true) {
+                await updateState();
+                await processNextMessage();
+                cleanupUserMessages();
+                await delay(STATE_CHECK_INTERVAL);
+            }
+        } catch (error) {
+            logger.error('Fatal error:', error);
+            if (browser) await browser.close();
+            process.exit(1);
         }
-    } catch (error) {
-        logger.error('Fatal error:', error);
-        if (browser) await browser.close();
-        process.exit(1);
-    }
-})();
+    })();
+}
+
+// Restart the script every two minutes
+setInterval(async () => {
+    logger.info('Restarting script...');
+    if (browser) await browser.close();
+    main();
+}, 2 * 60 * 1000); // 2 minutes in milliseconds
+
+// Initial run
+main();
 
