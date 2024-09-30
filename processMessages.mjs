@@ -35,9 +35,15 @@ async function processMessages(db, channel, authClient) {
         const currentPhase = determinePhase(userHistory);
         const phaseNumber = getPhaseNumber(currentPhase); // Use getPhaseNumber to get the phase number
 
-        await aiAgent.processMessage(message.shortMessage, formattedHistory); // Use AI agent to process message
-        const aiResponse = aiAgent.getResponse(); // Get the response from AI agent
-        logger.info(`AI Response for user ${message.username}: ${JSON.stringify(aiResponse)}`);
+        try {
+          await aiAgent.processMessage(message.shortMessage, formattedHistory); // Use AI agent to process message
+          const aiResponse = aiAgent.getResponse(); // Get the response from AI agent
+          logger.info(`AI Response for user ${message.username}: ${JSON.stringify(aiResponse)}`);
+        } catch (error) {
+          logger.error(`Error processing message with AI agent for user ${message.username}: ${error.message}`);
+          channel.ack(msg);
+          return;
+        }
 
         // Check for duplicate reply
         const lastSentMessage = userHistory.reverse().find(entry => entry.user === 'AI');
