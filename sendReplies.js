@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer-core';
+import puppeteer from 'puppeteer';
 import dotenv from 'dotenv';
 import amqp from 'amqplib';
 import { executablePath } from 'puppeteer';
@@ -32,14 +32,18 @@ function delay(ms) {
 
 
 async function initBrowser() {
-    browser = await puppeteer.launch({
-        headless: true, // Set to true in production
-        defaultViewport: null,
-        args: ['--start-maximized'],
-        executablePath: executablePath()
-    });
-    page = await browser.newPage();
-    await loginToMeetMe();
+    try {
+        browser = await puppeteer.launch({
+            headless: true, // Set to true in production
+            defaultViewport: null,
+            args: ['--start-maximized'],
+            executablePath: executablePath()
+        });
+        page = await browser.newPage();
+        await loginToMeetMe();
+    } catch (error) {
+        logger.error('Error initializing browser:', error);
+    }
 }
 
 
