@@ -95,6 +95,25 @@ async function updateState() {
 }
 
 
+async function checkForMessages() {
+    try {
+        const connection = await amqp.connect('amqp://localhost');
+        const channel = await connection.createChannel();
+        const queue = 'meetme_processed';
+
+        await channel.assertQueue(queue, { durable: true });
+
+        const message = await channel.get(queue, { noAck: true });
+        await channel.close();
+        await connection.close();
+
+        return message !== false;
+    } catch (error) {
+        logger.error('Error checking for messages:', error);
+        return false;
+    }
+}
+
 async function processNextMessage() {
     try {
         const connection = await amqp.connect('amqp://localhost');
