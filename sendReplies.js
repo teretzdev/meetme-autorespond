@@ -33,7 +33,7 @@ function delay(ms) {
 
 async function initBrowser() {
     browser = await puppeteer.launch({
-        headless: true, // Set to true for headless operation
+        headless: true, // Set to true in production
         defaultViewport: null,
         args: ['--start-maximized'],
         executablePath: executablePath()
@@ -551,20 +551,37 @@ function cleanupUserMessages() {
     }
 }
 
-function main() {
-    (async () => {
-        try {
-            await initBrowser();
-            while (true) {
+// Main execution
+(async () => {
+    try {
+        await initBrowser();
+        setInterval(async () => {
+            const hasMessages = await checkForMessages();
+            if (hasMessages) {
                 await updateState();
                 await processNextMessage();
                 cleanupUserMessages();
-                await delay(STATE_CHECK_INTERVAL);
+            } else {
+                logger.info('No messages found. Waiting for the next check...');
             }
-        } catch (error) {
-            logger.error('Fatal error:', error);
-            if (browser) await browser.close();
-            process.exit(1);
+        }, 120000); // Check every 2 minutes
+        
+        async function checkForMessages() {
+            try {
+                const connection = await amqp.connect('amqp://localhost');
+                const channel = await connection.createChannel();
+                const queue = 'meetme_processed';
+
+                await channel.assertQueue(queue, { durable: true });
+                const message = await channel.get(queue, { noAck: true });
+                await channel.close();
+                await connection.close();
+
+                return !!message;
+            } catch (error) {
+                logger.error('Error checking for messages:', error);
+                return false;
+            }
         }
     })();
 }
