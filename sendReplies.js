@@ -587,8 +587,10 @@ function cleanupUserMessages() {
                 return false;
             }
         }
-    })();
-}
+    } catch (error) { // Added catch block
+        logger.error('Error in main execution:', error);
+    }
+})();
 
 // Restart the script every two minutes
 setInterval(async () => {
@@ -599,4 +601,3 @@ setInterval(async () => {
 
 // Initial run
 main();
-
